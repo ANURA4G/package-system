@@ -1,4 +1,5 @@
 import jwt
+import logging
 from datetime import datetime, timedelta
 import bcrypt
 from fastapi import HTTPException, Security, Depends
@@ -8,6 +9,7 @@ from app.config import get_settings
 settings = get_settings()
 
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 def get_password_hash(password: str) -> str:
     pwd_bytes = password.encode('utf-8')
@@ -33,12 +35,15 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
+        logger.info("Token validation failed: expired token")
         raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.PyJWTError:
+        logger.warning("Token validation failed: invalid token")
         raise HTTPException(status_code=401, detail="Invalid token")
 
 def get_current_user(payload: dict = Depends(verify_token)):
     username = payload.get("sub")
     if username is None:
+        logger.warning("Token validation failed: missing subject claim")
         raise HTTPException(status_code=401, detail="Invalid token payload")
     return username

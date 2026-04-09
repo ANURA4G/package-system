@@ -54,6 +54,19 @@ Traditional web upload mechanisms fail when handling large medical files due to:
 - **Security:** HIPAA-compliant, zero AWS credential exposure
 - **User Experience:** Seamless, with pause/resume capability
 
+### Implementation Status (Demo vs Future Scope)
+This document includes both implemented functionality and roadmap items.
+
+**Implemented in current demo codebase:**
+- User authentication (JWT), upload, pause/resume/cancel, and upload history.
+- Multipart S3 upload orchestration with retries and progress tracking.
+- Local file preview in the browser before upload.
+
+**Marked as future scope (not fully implemented in current demo codebase):**
+- AI/ML features (for example anomaly detection and predictive optimization).
+- Cloud DICOM analytics/thumbnail preview workflows.
+- Advanced compliance and operations modules beyond core secure upload controls.
+
 ---
 
 ## 2. PROBLEM STATEMENT & ANALYSIS

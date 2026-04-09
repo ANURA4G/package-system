@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from app.database import users_collection
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
+from app.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -14,7 +15,8 @@ class TokenResponse(BaseModel):
     token_type: str
 
 @router.post("/register")
-async def register(user: UserCredentials):
+@limiter.limit("5/minute")
+async def register(request: Request, user: UserCredentials):
     # Check if user exists
     existing = users_collection.find_one({"username": user.username})
     if existing:
@@ -29,7 +31,8 @@ async def register(user: UserCredentials):
     return {"message": "User registered successfully"}
 
 @router.post("/login", response_model=TokenResponse)
-async def login(user: UserCredentials):
+@limiter.limit("10/minute")
+async def login(request: Request, user: UserCredentials):
     db_user = users_collection.find_one({"username": user.username})
     if not db_user or not verify_password(user.password, db_user["password"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")

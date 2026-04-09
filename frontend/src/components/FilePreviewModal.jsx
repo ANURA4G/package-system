@@ -8,7 +8,7 @@ import GenericViewer from "./viewers/GenericViewer";
 import "./FilePreviewModal.css";
 
 /**
- * Modal that fetches a pre-signed GET URL and renders the appropriate viewer
+ * Modal that renders a local browser preview using an object URL
  * based on file extension.
  */
 export default function FilePreviewModal({ file, onClose }) {
@@ -18,6 +18,7 @@ export default function FilePreviewModal({ file, onClose }) {
 
   const fileType = getFileType(file.name);
   const fileTypeLabel = getFileTypeLabel(fileType);
+  const isDicom = fileType === "dicom";
 
   // Generate a local object URL for the uploaded file
   useEffect(() => {
@@ -81,6 +82,11 @@ export default function FilePreviewModal({ file, onClose }) {
 
         {/* Body */}
         <div className="preview-body">
+          <div className="preview-scope-note">
+            Local preview only. This view inspects the file in your browser before upload.
+            {isDicom ? " Cloud DICOM slice/thumbnail preview from S3 is not enabled yet." : ""}
+          </div>
+
           {loading && (
             <div className="preview-loading">
               <div className="spinner" />

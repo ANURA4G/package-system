@@ -1,24 +1,128 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useChunkedUpload } from "./hooks/useChunkedUpload";
 import FileUploader from "./components/FileUploader";
 import ProgressTracker from "./components/ProgressTracker";
 import UploadStatus from "./components/UploadStatus";
 import FilePreviewModal from "./components/FilePreviewModal";
 import UploadHistory from "./components/UploadHistory";
+import ToastStack from "./components/ToastStack";
 import Login from "./components/Login";
+import { getCurrentUser } from "./api/authApi";
 import "./App.css";
+
+const TOAST_TTL_MS = 7000;
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem("token"));
   const [file, setFile] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
-  const { status, progress, chunkStatuses, error, uploadInfo, upload, pause, resume, cancel } =
+  const [toasts, setToasts] = useState([]);
+  const { status, progress, chunkStatuses, error, errorMeta, prepareUpload, upload, pause, resume, cancel } =
     useChunkedUpload();
 
-  const handleLogout = () => {
+  const pushToast = useCallback((type, title, message) => {
+    const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setToasts((prev) => [...prev, { id, type, title, message }]);
+
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, TOAST_TTL_MS);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
+
+  const handleLogout = useCallback(() => {
     localStorage.removeItem("token");
     setToken(null);
-  };
+    setFile(null);
+    setShowPreview(false);
+  }, []);
+
+  const handleFileSelect = useCallback(async (selectedFile) => {
+    await cancel();
+    setFile(selectedFile);
+    setShowPreview(false);
+
+    if (!selectedFile) return;
+
+    try {
+      await prepareUpload(selectedFile);
+    } catch (err) {
+      pushToast(
+        "error",
+        "Resume Check Failed",
+        "Could not verify previous upload session. Please try selecting the file again."
+      );
+    }
+  }, [cancel, prepareUpload, pushToast]);
+
+  const handleUpload = useCallback(() => {
+    if (file) upload(file);
+  }, [file, upload]);
+
+  const handleCancel = useCallback(() => {
+    cancel();
+    setFile(null);
+    setShowPreview(false);
+  }, [cancel]);
+
+  useEffect(() => {
+    if (!errorMeta) return;
+
+    if (errorMeta.kind === "chunk_retry_exhausted") {
+      pushToast(
+        "error",
+        "Chunk Upload Failed",
+        "A chunk failed after the maximum retries. Check your network and click Resume to continue."
+      );
+      return;
+    }
+
+    if (errorMeta.kind === "auth") {
+      pushToast(
+        "warning",
+        "Session Error",
+        "Your token is invalid or expired. Sign in again before retrying the upload."
+      );
+
+      // Clear stale token so protected calls do not keep failing with 401.
+      handleLogout();
+      return;
+    }
+
+    pushToast("error", "Upload Error", errorMeta.message || "Upload failed unexpectedly.");
+  }, [errorMeta, pushToast, handleLogout]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    let isActive = true;
+
+    const validateToken = async () => {
+      try {
+        await getCurrentUser();
+      } catch (err) {
+        if (!isActive) return;
+        const status = err?.response?.status;
+        if (status === 401 || status === 403) {
+          pushToast(
+            "warning",
+            "Session Expired",
+            "Please sign in again to continue uploading."
+          );
+          handleLogout();
+        }
+      }
+    };
+
+    validateToken();
+
+    return () => {
+      isActive = false;
+    };
+  }, [token, pushToast, handleLogout]);
 
   if (!token) {
     return (
@@ -31,24 +135,10 @@ function App() {
           <p>Secure, resumable file uploads for medical imaging and records</p>
         </header>
         <Login onLogin={setToken} />
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </div>
     );
   }
-
-  const handleFileSelect = useCallback((selectedFile) => {
-    setFile(selectedFile);
-    setShowPreview(false);
-  }, []);
-
-  const handleUpload = useCallback(() => {
-    if (file) upload(file);
-  }, [file, upload]);
-
-  const handleCancel = useCallback(() => {
-    cancel();
-    setFile(null);
-    setShowPreview(false);
-  }, [cancel]);
 
   return (
     <div className="app-container">
@@ -113,6 +203,8 @@ function App() {
           onClose={() => setShowPreview(false)}
         />
       )}
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
