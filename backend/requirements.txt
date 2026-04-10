@@ -10,3 +10,4 @@ bcrypt
 pyjwt
 python-multipart
 slowapi
+cryptography

@@ -2,7 +2,7 @@ import boto3
 import uuid
 import re
 from datetime import datetime, timezone
-from typing import List, Dict
+from typing import List, Dict, Any
 from functools import lru_cache
 from botocore.config import Config
 from app.config import get_settings
@@ -55,13 +55,34 @@ def _get_s3_client():
     )
 
 
-def initiate_multipart_upload(file_name: str, content_type: str, user_id: str = "anonymous") -> dict:
+def create_s3_client(access_key: str, secret_key: str, region: str):
+    """Create an S3 client from user-provided credentials."""
+    return boto3.client(
+        "s3",
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region,
+        config=Config(
+            signature_version='s3v4',
+            s3={'addressing_style': 'virtual'}
+        )
+    )
+
+
+def initiate_multipart_upload(
+    file_name: str,
+    content_type: str,
+    user_id: str = "anonymous",
+    s3_client: Any = None,
+    bucket_name: str | None = None,
+) -> dict:
     """Start a multipart upload → returns upload_id + file_key."""
     if _use_mock_s3():
         return mock_s3_service.start_multipart_upload(file_name, content_type, user_id)
 
     settings = get_settings()
-    s3 = _get_s3_client()
+    s3 = s3_client or _get_s3_client()
+    bucket = bucket_name or settings.S3_BUCKET_NAME
 
     safe_user_id = _sanitize_path_component(user_id, fallback="anonymous")
     safe_file_name = _sanitize_filename(file_name)
@@ -71,26 +92,32 @@ def initiate_multipart_upload(file_name: str, content_type: str, user_id: str = 
     file_key = f"medical-uploads/{safe_user_id}/{date_prefix}/{timestamp}_{unique_id}_{safe_file_name}"
 
     response = s3.create_multipart_upload(
-        Bucket=settings.S3_BUCKET_NAME,
+        Bucket=bucket,
         Key=file_key,
-        ContentType=content_type,
     )
 
     return {"upload_id": response["UploadId"], "file_key": file_key}
 
 
-def generate_presigned_url(file_key: str, upload_id: str, part_number: int) -> str:
+def generate_presigned_url(
+    file_key: str,
+    upload_id: str,
+    part_number: int,
+    s3_client: Any = None,
+    bucket_name: str | None = None,
+) -> str:
     """Generate a pre-signed PUT URL for one chunk."""
     if _use_mock_s3():
         return mock_s3_service.generate_presigned_part_url(file_key, upload_id, part_number)
 
     settings = get_settings()
-    s3 = _get_s3_client()
+    s3 = s3_client or _get_s3_client()
+    bucket = bucket_name or settings.S3_BUCKET_NAME
 
     return s3.generate_presigned_url(
         ClientMethod="upload_part",
         Params={
-            "Bucket": settings.S3_BUCKET_NAME,
+            "Bucket": bucket,
             "Key": file_key,
             "UploadId": upload_id,
             "PartNumber": part_number,
@@ -100,19 +127,24 @@ def generate_presigned_url(file_key: str, upload_id: str, part_number: int) -> s
 
 
 def complete_multipart_upload(
-    file_key: str, upload_id: str, parts: List[Dict]
+    file_key: str,
+    upload_id: str,
+    parts: List[Dict],
+    s3_client: Any = None,
+    bucket_name: str | None = None,
 ) -> dict:
     """Finalize the upload by sending sorted ETags to S3."""
     if _use_mock_s3():
         return mock_s3_service.complete_multipart_upload(file_key, upload_id, parts)
 
     settings = get_settings()
-    s3 = _get_s3_client()
+    s3 = s3_client or _get_s3_client()
+    bucket = bucket_name or settings.S3_BUCKET_NAME
 
     sorted_parts = sorted(parts, key=lambda p: p["PartNumber"])
 
     response = s3.complete_multipart_upload(
-        Bucket=settings.S3_BUCKET_NAME,
+        Bucket=bucket,
         Key=file_key,
         UploadId=upload_id,
         MultipartUpload={"Parts": sorted_parts},
@@ -124,16 +156,22 @@ def complete_multipart_upload(
     }
 
 
-def abort_multipart_upload(file_key: str, upload_id: str) -> dict:
+def abort_multipart_upload(
+    file_key: str,
+    upload_id: str,
+    s3_client: Any = None,
+    bucket_name: str | None = None,
+) -> dict:
     """Abort an in-progress upload and clean up S3 parts."""
     if _use_mock_s3():
         return mock_s3_service.abort_multipart_upload(file_key, upload_id)
 
     settings = get_settings()
-    s3 = _get_s3_client()
+    s3 = s3_client or _get_s3_client()
+    bucket = bucket_name or settings.S3_BUCKET_NAME
 
     s3.abort_multipart_upload(
-        Bucket=settings.S3_BUCKET_NAME,
+        Bucket=bucket,
         Key=file_key,
         UploadId=upload_id,
     )

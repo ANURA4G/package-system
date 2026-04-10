@@ -2,61 +2,58 @@ import "./ProgressTracker.css";
 
 export default function ProgressTracker({ progress, chunkStatuses, status }) {
   const completed = chunkStatuses.filter((c) => c.status === "completed").length;
-  const uploading = chunkStatuses.filter((c) => c.status === "uploading").length;
   const errors = chunkStatuses.filter((c) => c.status === "error").length;
-  const pending = chunkStatuses.filter((c) => c.status === "pending").length;
 
   return (
-    <div className="progress-tracker">
-      {/* Overall progress bar */}
-      <div className="overall-progress">
-        <div className="progress-header">
-          <h4>Upload Progress</h4>
-          <span className="progress-percentage">{progress}%</span>
+    <div className="bg-surface-container-lowest p-6 rounded-xl shadow-[0px_4px_24px_rgba(0,0,0,0.02)] flex flex-col gap-4">
+      <div className="flex justify-between items-start">
+        <div className="flex gap-4">
+          <div className="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center text-primary">
+            <span className="material-symbols-outlined text-xl">cloud_sync</span>
+          </div>
+          <div>
+            <div className="text-sm font-bold truncate max-w-[240px]">Live Transfer Progress</div>
+            <div className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mt-1">Chunk Upload Status</div>
+          </div>
         </div>
-        <div className="progress-bar-wrapper">
-          <div
-            className={`progress-bar-fill ${status === "uploading" ? "uploading" : ""} ${status === "completed" ? "completed" : ""}`}
-            style={{ width: `${progress}%` }}
-          />
+        <div className="text-right">
+          <div className="text-sm font-bold text-on-tertiary-container text-xl">{progress}%</div>
+          <div className="text-[10px] text-on-surface-variant font-bold capitalize text-primary">{status}</div>
         </div>
       </div>
-
-      {/* Stats row */}
-      <div className="upload-stats">
-        <div className="stat-item">
-          <span className="stat-dot completed" />
-          {completed} completed
-        </div>
-        <div className="stat-item">
-          <span className="stat-dot uploading" />
-          {uploading} uploading
-        </div>
-        <div className="stat-item">
-          <span className="stat-dot pending" />
-          {pending} pending
-        </div>
-        {errors > 0 && (
-          <div className="stat-item">
-            <span className="stat-dot error" />
-            {errors} failed
-          </div>
+      
+      <div className="w-full h-2 bg-surface-container-low rounded-full overflow-hidden mt-2">
+        <div 
+          className={`h-full rounded-full transition-all duration-300 ${status === 'error' ? 'bg-error' : status === 'completed' ? 'bg-success' : 'bg-teal-500'}`} 
+          style={{ width: `${progress}%` }}
+        ></div>
+      </div>
+      
+      <div className="flex justify-between items-center text-xs font-semibold text-on-surface-variant mt-1 border-t border-surface-container-low pt-4">
+        <span>{completed} / {chunkStatuses.length} Chunks Transferred</span>
+        {errors > 0 ? (
+          <span className="text-error">{errors} Chunks Failed</span>
+        ) : (
+          <span className="text-teal-600">No Corruptions Detected</span>
         )}
       </div>
 
-      {/* Chunk grid visualization */}
-      {chunkStatuses.length > 0 && chunkStatuses.length <= 600 && (
-        <div className="chunk-section">
-          <h5>Chunk Map ({chunkStatuses.length} parts)</h5>
-          <div className="chunk-grid">
-            {chunkStatuses.map((chunk) => (
+      {/* Chunk Map Mini */}
+      {chunkStatuses.length > 0 && chunkStatuses.length <= 1000 && (
+        <div className="mt-4 flex flex-wrap gap-1">
+          {chunkStatuses.map((chunk) => {
+            let color = "bg-surface-container-highest";
+            if (chunk.status === "completed") color = "bg-teal-500";
+            if (chunk.status === "uploading") color = "bg-tertiary-container animate-pulse";
+            if (chunk.status === "error") color = "bg-error";
+            return (
               <div
                 key={chunk.partNumber}
-                className={`chunk-cell ${chunk.status}`}
+                className={`w-2 h-2 rounded-sm ${color}`}
                 title={`Part ${chunk.partNumber}: ${chunk.status}`}
               />
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
     </div>

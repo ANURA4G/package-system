@@ -1,5 +1,6 @@
 import os
 import random
+import hashlib
 from pathlib import Path
 
 # Force mock storage mode so no real AWS calls are made.
@@ -53,6 +54,13 @@ def build_virtual_file(total_parts: int, tag: str):
     return virtual_size, chunks
 
 
+def build_checksum(chunks) -> str:
+    digest = hashlib.sha256()
+    for _, chunk in chunks:
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def register_and_login(client: TestClient, username: str, password: str) -> str:
     register_resp = client.post("/api/auth/register", json={"username": username, "password": password})
     assert_true(register_resp.status_code in (200, 400), f"Unexpected register status {register_resp.status_code}")
@@ -64,7 +72,7 @@ def register_and_login(client: TestClient, username: str, password: str) -> str:
     return token
 
 
-def start_upload(client: TestClient, headers: dict, file_id: str, file_name: str, size: int):
+def start_upload(client: TestClient, headers: dict, file_id: str, file_name: str, size: int, checksum: str):
     resp = client.post(
         "/api/upload/start-upload",
         headers=headers,
@@ -73,6 +81,7 @@ def start_upload(client: TestClient, headers: dict, file_id: str, file_name: str
             "file_name": file_name,
             "content_type": "application/octet-stream",
             "size": size,
+            "checksum": checksum,
         },
     )
     assert_true(resp.status_code == 200, f"start-upload failed: {resp.status_code} {resp.text}")
@@ -180,7 +189,17 @@ def resume_session(client: TestClient, headers: dict, file_id: str):
     return data
 
 
-def complete_upload(client: TestClient, headers: dict, file_id: str, file_key: str, upload_id: str, file_name: str, size: int, parts):
+def complete_upload(
+    client: TestClient,
+    headers: dict,
+    file_id: str,
+    file_key: str,
+    upload_id: str,
+    file_name: str,
+    size: int,
+    parts,
+    checksum: str,
+):
     resp = client.post(
         "/api/upload/complete-upload",
         headers=headers,
@@ -190,6 +209,7 @@ def complete_upload(client: TestClient, headers: dict, file_id: str, file_key: s
             "upload_id": upload_id,
             "file_name": file_name,
             "size": size,
+            "checksum": checksum,
             "parts": parts,
         },
     )
@@ -236,10 +256,11 @@ def run_validation():
         headers = make_auth_headers(token)
 
         # 1) Normal upload + incomplete validation + idempotent update-part
-        file_name_1 = "normal_case.bin"
+        file_name_1 = "normal_case.pdf"
         size_1, chunks_1 = build_virtual_file(3, "normal")
+        checksum_1 = build_checksum(chunks_1)
         file_id_1 = build_file_id(file_name_1, size_1)
-        start_1 = start_upload(client, headers, file_id_1, file_name_1, size_1)
+        start_1 = start_upload(client, headers, file_id_1, file_name_1, size_1, checksum_1)
         upload_id_1 = start_1["upload_id"]
         file_key_1 = start_1["file_key"]
 
@@ -277,6 +298,7 @@ def run_validation():
             file_name_1,
             size_1,
             uploaded_1a,
+            checksum_1,
         )
         assert_true(incomplete_resp.status_code == 400, "complete-upload should fail for incomplete uploads")
 
@@ -299,6 +321,7 @@ def run_validation():
             file_name_1,
             size_1,
             uploaded_1a + uploaded_1b,
+            checksum_1,
         )
         assert_true(complete_resp_1.status_code == 200, f"Normal complete failed: {complete_resp_1.status_code}")
 
@@ -307,10 +330,11 @@ def run_validation():
         assert_true(len(set(session_1.get("uploaded_part_numbers", []))) == 3, "Part numbers were not tracked correctly")
 
         # 2) Pause + Resume
-        file_name_2 = "pause_resume.bin"
+        file_name_2 = "pause_resume.pdf"
         size_2, chunks_2 = build_virtual_file(4, "pause")
+        checksum_2 = build_checksum(chunks_2)
         file_id_2 = build_file_id(file_name_2, size_2)
-        start_2 = start_upload(client, headers, file_id_2, file_name_2, size_2)
+        start_2 = start_upload(client, headers, file_id_2, file_name_2, size_2, checksum_2)
         upload_id_2 = start_2["upload_id"]
         file_key_2 = start_2["file_key"]
 
@@ -350,14 +374,16 @@ def run_validation():
             file_name_2,
             size_2,
             uploaded_2b,
+            checksum_2,
         )
         assert_true(complete_resp_2.status_code == 200, "Pause/resume completion failed")
 
         # 3) Crash recovery simulation
-        file_name_3 = "crash_recovery.bin"
+        file_name_3 = "crash_recovery.pdf"
         size_3, chunks_3 = build_virtual_file(7, "crash")
+        checksum_3 = build_checksum(chunks_3)
         file_id_3 = build_file_id(file_name_3, size_3)
-        start_3 = start_upload(client, headers, file_id_3, file_name_3, size_3)
+        start_3 = start_upload(client, headers, file_id_3, file_name_3, size_3, checksum_3)
         upload_id_3 = start_3["upload_id"]
         file_key_3 = start_3["file_key"]
 
@@ -400,14 +426,16 @@ def run_validation():
             file_name_3,
             size_3,
             uploaded_3b,
+            checksum_3,
         )
         assert_true(complete_resp_3.status_code == 200, "Crash recovery completion failed")
 
         # 4) Retry logic with random fail-once parts
-        file_name_4 = "retry_logic.bin"
+        file_name_4 = "retry_logic.pdf"
         size_4, chunks_4 = build_virtual_file(5, "retry")
+        checksum_4 = build_checksum(chunks_4)
         file_id_4 = build_file_id(file_name_4, size_4)
-        start_4 = start_upload(client_after_restart, headers_2, file_id_4, file_name_4, size_4)
+        start_4 = start_upload(client_after_restart, headers_2, file_id_4, file_name_4, size_4, checksum_4)
         upload_id_4 = start_4["upload_id"]
         file_key_4 = start_4["file_key"]
 
@@ -438,14 +466,16 @@ def run_validation():
             file_name_4,
             size_4,
             uploaded_4,
+            checksum_4,
         )
         assert_true(complete_resp_4.status_code == 200, "Retry scenario completion failed")
 
         # 5) Cancel flow
-        file_name_5 = "cancel_flow.bin"
+        file_name_5 = "cancel_flow.pdf"
         size_5, chunks_5 = build_virtual_file(4, "cancel")
+        checksum_5 = build_checksum(chunks_5)
         file_id_5 = build_file_id(file_name_5, size_5)
-        start_5 = start_upload(client_after_restart, headers_2, file_id_5, file_name_5, size_5)
+        start_5 = start_upload(client_after_restart, headers_2, file_id_5, file_name_5, size_5, checksum_5)
         upload_id_5 = start_5["upload_id"]
         file_key_5 = start_5["file_key"]
 

@@ -23,6 +23,7 @@ db = client[settings.MONGO_DB_NAME]
 users_collection = db["users"]
 upload_sessions_collection = db["upload_sessions"]
 uploads_collection = db["uploads"]
+bucket_credentials_collection = db["bucket_credentials"]
 
 
 def check_database_connection() -> None:

@@ -15,12 +15,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-export async function startUpload(fileId, fileName, contentType, size = 0) {
+export async function startUpload(
+  fileId,
+  fileName,
+  contentType,
+  size = 0,
+  checksum = "pending",
+  bucketName = null,
+) {
   const { data } = await api.post("/start-upload", {
     file_id: fileId,
     file_name: fileName,
     content_type: contentType || "application/octet-stream",
     size,
+    checksum,
+    bucket_name: bucketName || undefined,
   });
   return data;
 }
@@ -62,13 +71,14 @@ export async function resumeSession(fileId) {
   }
 }
 
-export async function completeUpload(fileId, fileKey, uploadId, fileName, size, parts) {
+export async function completeUpload(fileId, fileKey, uploadId, fileName, size, parts, checksum) {
   const { data } = await api.post("/complete-upload", {
     file_id: fileId,
     file_key: fileKey,
     upload_id: uploadId,
     file_name: fileName,
     size,
+    checksum,
     parts,
   });
   return data;
@@ -82,8 +92,35 @@ export async function abortUpload(fileKey, uploadId) {
   return data;
 }
 
-export async function getUploadHistory() {
-  const { data } = await api.get("/uploads");
+export async function getUploadHistory(options = {}) {
+  const query = new URLSearchParams();
+  if (options.fromTs) query.set("from_ts", options.fromTs);
+  if (options.toTs) query.set("to_ts", options.toTs);
+
+  const queryString = query.toString();
+  const endpoint = queryString ? `/uploads?${queryString}` : "/uploads";
+
+  const { data } = await api.get(endpoint);
+  return data;
+}
+
+export async function getBuckets() {
+  const { data } = await api.get("/buckets");
+  return data;
+}
+
+export async function addBucket(bucketPayload) {
+  const { data } = await api.post("/add-bucket", bucketPayload);
+  return data;
+}
+
+export async function deleteBucket(bucketId) {
+  const { data } = await api.delete(`/buckets/${encodeURIComponent(bucketId)}`);
+  return data;
+}
+
+export async function getBucketUsage(bucketName) {
+  const { data } = await api.get(`/bucket-usage/${encodeURIComponent(bucketName)}`);
   return data;
 }
 

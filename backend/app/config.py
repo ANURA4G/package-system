@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "ap-south-1"
     S3_BUCKET_NAME: str = ""
+    ENCRYPTION_KEY: str = ""
     PRESIGNED_URL_EXPIRY: int = 3600  # 1 hour
+    KMS_KEY_ID: str = ""
     USE_MOCK_S3: bool = False
     MOCK_S3_STATE_FILE: str = "tmp/mock_s3_state.json"
     MOCK_S3_PART_FAILURE_RATE: float = Field(default=0.0, ge=0.0, le=1.0)

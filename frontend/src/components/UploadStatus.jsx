@@ -2,39 +2,60 @@ import "./UploadStatus.css";
 
 const STATUS_CONFIG = {
   uploading: {
-    icon: "⬆️",
-    title: "Uploading...",
-    description: "Your file is being securely uploaded to the cloud.",
+    icon: "sync",
+    color: "text-tertiary-container",
+    bg: "bg-tertiary-fixed-dim/20",
+    title: "Uploading Securely",
+    description: "Your file is being encrypted and transmitted to the cloud.",
   },
   paused: {
-    icon: "⏸️",
+    icon: "pause_circle",
+    color: "text-secondary",
+    bg: "bg-surface-container-high",
     title: "Upload Paused",
-    description: "You can resume the upload at any time. Progress is saved.",
+    description: "Session preserved. You can resume the upload at any time.",
   },
   completed: {
-    icon: "✅",
-    title: "Upload Complete!",
-    description: "Your medical file has been securely uploaded and stored.",
+    icon: "verified",
+    color: "text-teal-600",
+    bg: "bg-teal-400/20",
+    title: "Upload Verified",
+    description: "Your medical file has been securely ingested into the vault.",
   },
   error: {
-    icon: "❌",
-    title: "Upload Failed",
-    description: null, // Will use error message
+    icon: "error",
+    color: "text-error",
+    bg: "bg-error-container",
+    title: "Transmission Error",
+    description: null,
   },
 };
 
-export default function UploadStatus({ status, error }) {
+export default function UploadStatus({ status, error, networkType = "Medium", displayChunkMB = 5 }) {
   if (status === "idle") return null;
 
   const config = STATUS_CONFIG[status];
   if (!config) return null;
 
+  const networkLabel = networkType === "Slow"
+    ? "Slow 🐢"
+    : networkType === "Medium"
+      ? "Medium ⚡"
+      : "Fast ⚡";
+
   return (
-    <div className={`upload-status ${status}`}>
-      <span className="status-icon">{config.icon}</span>
-      <div className="status-text">
-        <h4>{config.title}</h4>
-        <p>{status === "error" && error ? error : config.description}</p>
+    <div className={`p-4 rounded-xl flex items-start gap-4 border border-outline-variant/30 ${config.bg}`}>
+      <span className={`material-symbols-outlined mt-0.5 ${config.color}`} style={{fontVariationSettings: "'FILL' 1"}}>{config.icon}</span>
+      <div>
+        <h4 className={`font-bold text-sm ${config.color}`}>{config.title}</h4>
+        <p className="text-xs text-on-surface-variant font-medium mt-1">
+          {status === "error" && error ? error : config.description}
+        </p>
+        <div className="mt-2 text-[11px] font-semibold text-on-surface-variant space-y-0.5">
+          <p>Adaptive Mode: ON</p>
+          <p>Network: {networkLabel}</p>
+          <p>Chunk Size: {displayChunkMB} MB</p>
+        </div>
       </div>
     </div>
   );

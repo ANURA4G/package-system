@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MediVault | Institutional Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed-dim": "#b0c9e8",
+                        "on-surface": "#171c1f",
+                        "on-secondary-fixed-variant": "#2e4963",
+                        "on-secondary": "#ffffff",
+                        "secondary": "#46617c",
+                        "tertiary-fixed-dim": "#79d4e2",
+                        "inverse-surface": "#2c3134",
+                        "tertiary-container": "#002e34",
+                        "on-error-container": "#93000a",
+                        "on-surface-variant": "#43474d",
+                        "on-background": "#171c1f",
+                        "tertiary-fixed": "#96f1ff",
+                        "inverse-primary": "#b0c9e8",
+                        "surface-variant": "#dfe3e7",
+                        "error": "#ba1a1a",
+                        "tertiary": "#00181b",
+                        "on-tertiary-fixed-variant": "#004f57",
+                        "on-primary-fixed-variant": "#314863",
+                        "surface-container-low": "#f0f4f8",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary-fixed": "#001d33",
+                        "on-tertiary-fixed": "#001f24",
+                        "secondary-fixed-dim": "#aec9e8",
+                        "surface-tint": "#49607c",
+                        "on-tertiary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "surface-container-high": "#e4e9ed",
+                        "background": "#f6fafe",
+                        "on-primary": "#ffffff",
+                        "primary-fixed": "#d1e4ff",
+                        "outline-variant": "#c3c6ce",
+                        "on-tertiary-container": "#3c9caa",
+                        "surface-bright": "#f6fafe",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#c4e0ff",
+                        "inverse-on-surface": "#edf1f5",
+                        "outline": "#74777e",
+                        "primary": "#00152a",
+                        "on-secondary-container": "#48637e",
+                        "surface-container-highest": "#dfe3e7",
+                        "on-primary-container": "#7a92b0",
+                        "primary-container": "#102a43",
+                        "surface-dim": "#d6dade",
+                        "secondary-fixed": "#cfe5ff",
+                        "surface": "#f6fafe",
+                        "on-primary-fixed": "#011d35",
+                        "surface-container": "#eaeef2"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "fontFamily": {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, .font-headline { font-family: 'Manrope', sans-serif; }
+    </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex flex-col">
+<header class="sticky top-0 z-50 bg-slate-50/80 dark:bg-[#00152a]/80 backdrop-blur-2xl shadow-[0px_12px_32px_rgba(0,21,42,0.06)]">
+<div class="flex flex-col w-full max-w-[1440px] mx-auto px-10 gap-4 py-4 font-['Manrope'] tracking-tight antialiased">
+<div class="flex items-center justify-between gap-8">
+<div class="flex items-center gap-12">
+<span class="text-2xl font-extrabold tracking-tighter text-[#00152a] dark:text-white">MediVault</span>
+<div class="relative w-96">
+<div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline text-sm">search</span>
+</div>
+<input class="w-full bg-surface-container-highest border-none rounded-lg py-2 pl-10 pr-4 text-sm focus:ring-1 focus:ring-tertiary/20 placeholder:text-outline transition-all" placeholder="Search institutional data..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 px-3 py-1.5 bg-tertiary-container rounded-full">
+<span class="material-symbols-outlined text-tertiary-fixed-dim text-sm" style="font-variation-settings: 'FILL' 1;">verified_user</span>
+<span class="text-[10px] font-bold uppercase tracking-widest text-tertiary-fixed-dim">Verified KMS</span>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-white/5 transition-all duration-300">
+<span class="material-symbols-outlined text-on-surface-variant">notifications</span>
+</button>
+<div class="flex items-center gap-3 pl-4 border-l border-outline-variant/30">
+<div class="text-right">
+<p class="text-xs font-bold text-primary">Dr. Julian Vance</p>
+<p class="text-[10px] text-on-surface-variant uppercase tracking-tighter">Chief Medical Officer</p>
+</div>
+<img alt="User profile" class="w-10 h-10 rounded-full object-cover ring-2 ring-surface-container-high" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDb6-fOQXDgADCyUDh16bEHsxFRwE_Z6NJN8w8SiLHhDPTX25oG4IXG-0Y6iKSSqy5trs319tRKJ8lEA_Of62BL5fpsA2vv09hedfKtw4cwI4wvsDdlW_LVW1ofg06KlIpWsG1Z4vE6kaq5_Z-T-ctUd7EZDl0Bh5_XAO5eK2RHpiQPyBO7WIh0cKgvDeMPoCJg2K8NehKkMaZTG2mJxXlqaFOBSkbPEVb8LBmrY8nHAlLGvZGwI1_8hkWD02EKEuKPzZmz2MJdK7E"/>
+</div>
+</div>
+</div>
+</div>
+<nav class="flex items-center gap-10 pt-2">
+<a class="text-teal-600 dark:text-teal-400 font-bold border-b-2 border-teal-500 pb-1" href="#">Dashboard</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-[#00152a] dark:hover:text-white transition-colors" href="#">Upload</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-[#00152a] dark:hover:text-white transition-colors" href="#">Buckets</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-[#00152a] dark:hover:text-white transition-colors" href="#">History</a>
+<div class="ml-auto">
+<button class="bg-primary text-on-primary px-6 py-2 rounded font-bold text-sm flex items-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-sm">add_box</span>
+                        New Upload
+                    </button>
+</div>
+</nav>
+</div>
+</header>
+<main class="flex-grow w-full max-w-[1440px] mx-auto px-10 py-12">
+<header class="mb-12 flex justify-between items-end">
+<div>
+<h1 class="text-5xl font-extrabold tracking-tighter text-primary mb-2">Institutional Overview</h1>
+<p class="text-on-surface-variant text-lg max-w-2xl font-body">Managing medical data integrity with surgical precision across the hospital network.</p>
+</div>
+<div class="text-right">
+<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">System Status</span>
+<div class="flex items-center gap-2 mt-1">
+<div class="w-2 h-2 rounded-full bg-tertiary-fixed-dim animate-pulse"></div>
+<span class="text-sm font-semibold text-tertiary-container">Sanctuary Shield Active</span>
+</div>
+</div>
+</header>
+<div class="grid grid-cols-12 gap-8 mb-8">
+<div class="col-span-12 lg:col-span-6 bg-primary text-on-primary p-10 rounded-xl shadow-[0px_12px_32px_rgba(0,21,42,0.1)] relative overflow-hidden flex flex-col justify-center min-h-[440px]">
+<div class="absolute -right-4 -bottom-4 opacity-10">
+<span class="material-symbols-outlined text-[12rem]">database</span>
+</div>
+<div class="relative z-10">
+<h3 class="text-xs font-bold uppercase tracking-widest text-primary-fixed-dim mb-8">Storage Utilization</h3>
+<p class="text-8xl font-extrabold tracking-tighter text-white mb-4">450GB</p>
+<p class="text-primary-fixed-dim text-lg font-medium">Used of 2TB available sanctuary space</p>
+<div class="mt-12 flex gap-4">
+<button class="text-[10px] font-bold uppercase tracking-widest px-6 py-3 bg-white text-primary rounded hover:bg-slate-100 transition-all">Manage Buckets</button>
+<button class="text-[10px] font-bold uppercase tracking-widest px-6 py-3 bg-white/10 rounded hover:bg-white/20 transition-all border border-white/10">Optimization Tools</button>
+</div>
+</div>
+</div>
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest p-10 rounded-xl shadow-[0px_12px_32px_rgba(0,21,42,0.04)] border border-surface-container-high flex flex-col min-h-[440px]">
+<div class="flex items-center gap-3 mb-10">
+<span class="material-symbols-outlined text-tertiary-container text-3xl" style="font-variation-settings: 'FILL' 1;">analytics</span>
+<h2 class="text-2xl font-extrabold tracking-tight text-primary">Precision Analysis</h2>
+</div>
+<div class="flex-grow space-y-10">
+<div class="relative pt-1">
+<div class="flex mb-3 items-center justify-between">
+<div>
+<span class="text-xs font-bold inline-block py-1.5 px-3 uppercase rounded-full text-tertiary-container bg-tertiary-fixed-dim/20 tracking-wider">
+                                    Data Integrity
+                                </span>
+</div>
+<div class="text-right">
+<span class="text-lg font-extrabold inline-block text-primary">
+                                    99.98%
+                                </span>
+</div>
+</div>
+<div class="overflow-hidden h-2 mb-4 text-xs flex rounded-full bg-surface-container-high">
+<div class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-tertiary-container" style="width:99.98%"></div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<div class="flex items-start gap-4">
+<span class="material-symbols-outlined text-tertiary-container text-2xl">check_circle</span>
+<div>
+<p class="text-base font-bold text-primary">Zero Corruption</p>
+<p class="text-xs text-on-surface-variant leading-relaxed">All 1.2M nodes matched cryptographic signatures.</p>
+</div>
+</div>
+<div class="flex items-start gap-4">
+<span class="material-symbols-outlined text-tertiary-container text-2xl">vpn_lock</span>
+<div>
+<p class="text-base font-bold text-primary">AES-256-GCM</p>
+<p class="text-xs text-on-surface-variant leading-relaxed">Quantum-resistant layering active for transfers.</p>
+</div>
+</div>
+</div>
+<div class="mt-auto">
+<button class="w-full py-4 bg-primary text-white text-[10px] font-bold uppercase tracking-widest rounded hover:opacity-90 transition-opacity">
+                            Generate Audit Certificate
+                        </button>
+</div>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-8 mb-8">
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest p-8 rounded-xl shadow-[0px_12px_32px_rgba(0,21,42,0.04)] relative overflow-hidden group border border-surface-container-high">
+<div class="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+<span class="material-symbols-outlined text-8xl">cloud_upload</span>
+</div>
+<h3 class="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-6">Total Uploads</h3>
+<p class="text-6xl font-extrabold tracking-tighter text-primary mb-2">1.2M</p>
+<div class="flex items-center gap-2 text-tertiary-container font-semibold text-sm">
+<span class="material-symbols-outlined text-sm">trending_up</span>
+<span>12% Increase this month</span>
+</div>
+</div>
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest p-8 rounded-xl shadow-[0px_12px_32px_rgba(0,21,42,0.04)] border border-surface-container-high">
+<h3 class="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-6">Active Transfers</h3>
+<div class="flex items-baseline gap-4 mb-6">
+<p class="text-6xl font-extrabold tracking-tighter text-primary">84</p>
+<p class="text-on-surface-variant font-medium text-sm">Global Nodes</p>
+</div>
+<div class="w-full bg-surface-container-low h-2 rounded-full overflow-hidden">
+<div class="bg-tertiary-container h-full w-[65%] rounded-full"></div>
+</div>
+<div class="flex justify-between mt-4 text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">
+<span>Throughput: 4.2 GB/s</span>
+<span>Latency: 12ms</span>
+</div>
+</div>
+</div>
+<div class="w-full bg-surface-container-lowest rounded-xl overflow-hidden shadow-[0px_12px_32px_rgba(0,21,42,0.04)] border border-surface-container-high">
+<div class="p-8 border-b border-surface-container-high flex justify-between items-center">
+<h2 class="text-xl font-extrabold tracking-tight text-primary">Recent Secure Activity</h2>
+<button class="text-xs font-bold text-on-primary-container hover:underline">View Audit Log</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead>
+<tr class="text-[10px] uppercase tracking-widest text-on-surface-variant bg-surface-container-low/50">
+<th class="px-8 py-4">Transaction ID</th>
+<th class="px-8 py-4">Action</th>
+<th class="px-8 py-4">Status</th>
+<th class="px-8 py-4 text-right">Timestamp</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container-high/50">
+<tr class="hover:bg-surface-container-low/30 transition-colors">
+<td class="px-8 py-6 font-mono text-xs text-primary font-bold">#TRX-994021</td>
+<td class="px-8 py-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-tertiary-container/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-tertiary-container text-lg">radiology</span>
+</div>
+<div>
+<p class="text-sm font-semibold text-primary">DICOM Bundle Upload</p>
+<p class="text-[10px] text-on-surface-variant">Radiology Dept</p>
+</div>
+</div>
+</td>
+<td class="px-8 py-6">
+<span class="px-3 py-1 bg-tertiary-fixed-dim/20 text-tertiary-container text-[10px] font-bold rounded-full uppercase tracking-wider">Secure</span>
+</td>
+<td class="px-8 py-6 text-right text-xs text-on-surface-variant font-medium">2 mins ago</td>
+</tr>
+<tr class="hover:bg-surface-container-low/30 transition-colors">
+<td class="px-8 py-6 font-mono text-xs text-primary font-bold">#TRX-994019</td>
+<td class="px-8 py-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-secondary-container/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary text-lg">shield</span>
+</div>
+<div>
+<p class="text-sm font-semibold text-primary">KMS Key Rotation</p>
+<p class="text-[10px] text-on-surface-variant">System Automated</p>
+</div>
+</div>
+</td>
+<td class="px-8 py-6">
+<span class="px-3 py-1 bg-tertiary-fixed-dim/20 text-tertiary-container text-[10px] font-bold rounded-full uppercase tracking-wider">Verified</span>
+</td>
+<td class="px-8 py-6 text-right text-xs text-on-surface-variant font-medium">14 mins ago</td>
+</tr>
+<tr class="hover:bg-surface-container-low/30 transition-colors">
+<td class="px-8 py-6 font-mono text-xs text-primary font-bold">#TRX-994015</td>
+<td class="px-8 py-6">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant text-lg">folder_shared</span>
+</div>
+<div>
+<p class="text-sm font-semibold text-primary">Bucket Access Granted</p>
+<p class="text-[10px] text-on-surface-variant">Pathology Lab-B</p>
+</div>
+</div>
+</td>
+<td class="px-8 py-6">
+<span class="px-3 py-1 bg-tertiary-fixed-dim/20 text-tertiary-container text-[10px] font-bold rounded-full uppercase tracking-wider">Secure</span>
+</td>
+<td class="px-8 py-6 text-right text-xs text-on-surface-variant font-medium">42 mins ago</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+<footer class="bg-slate-50 dark:bg-[#00152a] mt-auto">
+<div class="flex justify-between items-center w-full px-12 py-8 font-['Inter'] text-sm uppercase tracking-widest border-t border-surface-container-high bg-slate-100 dark:bg-[#00181b]">
+<div class="flex flex-col gap-1">
+<span class="font-['Manrope'] font-bold text-slate-900 dark:text-white normal-case text-base">MediVault Precision Systems</span>
+<span class="text-slate-400 text-[10px]">© 2024 MediVault Precision Systems. All rights reserved.</span>
+</div>
+<div class="flex gap-8">
+<a class="text-slate-400 hover:text-teal-500 transition-colors opacity-80 hover:opacity-100" href="#">Security Protocol</a>
+<a class="text-slate-400 hover:text-teal-500 transition-colors opacity-80 hover:opacity-100" href="#">API Documentation</a>
+<a class="text-slate-400 hover:text-teal-500 transition-colors opacity-80 hover:opacity-100" href="#">Support Sanctuary</a>
+</div>
+</div>
+</footer>
+
+</body></html>

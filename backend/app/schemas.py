@@ -7,6 +7,8 @@ class StartUploadRequest(BaseModel):
     file_name: str = Field(..., min_length=1, max_length=255)
     content_type: str = Field(default="application/octet-stream", min_length=1, max_length=255)
     size: int = Field(default=0, ge=0)
+    checksum: str = Field(..., min_length=1, max_length=128)
+    bucket_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 class StartUploadResponse(BaseModel):
     upload_id: str
@@ -51,6 +53,7 @@ class CompleteUploadRequest(BaseModel):
     upload_id: str = Field(..., min_length=1, max_length=512)
     file_name: str = Field(..., min_length=1, max_length=255)
     size: int = Field(..., ge=0)
+    checksum: str = Field(..., min_length=1, max_length=128)
     parts: List[UploadPart] = Field(default_factory=list)
 
 class CompleteUploadResponse(BaseModel):
@@ -72,3 +75,39 @@ class FileUrlRequest(BaseModel):
 class FileUrlResponse(BaseModel):
     url: str
     file_key: str
+
+
+# ── Bucket Credentials ───────────────────────────────────────
+class AddBucketRequest(BaseModel):
+    aws_access_key_id: str = Field(..., min_length=1, max_length=128)
+    aws_secret_access_key: str = Field(..., min_length=1, max_length=256)
+    region: str = Field(..., min_length=1, max_length=64)
+    bucket_name: str = Field(..., min_length=1, max_length=255)
+    size_limit: int = Field(default=10737418240, ge=1)
+
+
+class AddBucketResponse(BaseModel):
+    message: str
+
+
+class BucketSummary(BaseModel):
+    id: str
+    bucket_name: str
+    region: str
+    size_limit: int
+    created_at: str
+    validation_status: str | None = None
+    system_default: bool = False
+
+
+class DeleteBucketResponse(BaseModel):
+    message: str
+
+
+class BucketUsageResponse(BaseModel):
+    bucket_name: str
+    used: int
+    limit: int
+    percent: float
+    status: str
+    message: str
