@@ -463,6 +463,22 @@ async def update_part(request: Request, payload: UpdatePartRequest, username: st
         raise HTTPException(status_code=404, detail="Session not found")
 
     if session.get("status") != "in_progress":
+        # Allow idempotent late-arriving retries after completion/abort when the same part was already stored.
+        recorded_part = upload_sessions_collection.find_one(
+            {
+                **session_filter,
+                "parts_uploaded": {"$elemMatch": {"PartNumber": payload.part_number, "ETag": payload.etag}},
+            },
+            {"_id": 1},
+        )
+        if recorded_part:
+            logger.info(
+                "Late idempotent update-part ignored for upload_id=%s user_id=%s part=%s",
+                payload.upload_id,
+                username,
+                payload.part_number,
+            )
+            return {"message": "Part already recorded"}
         raise HTTPException(status_code=409, detail="Upload session is not active")
 
     if session.get("file_id") != payload.file_id or session.get("file_key") != payload.file_key:

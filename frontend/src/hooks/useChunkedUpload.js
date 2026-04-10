@@ -153,6 +153,19 @@ export function useChunkedUpload() {
   const speedSamplesRef = useRef([]);
   const uploadedChunkCountRef = useRef(0);
   const safeChunkSizeBytesRef = useRef(DEFAULT_CHUNK_MB * MB_BYTES);
+  const uploadRunIdRef = useRef(0);
+  const activeFetchControllersRef = useRef(new Set());
+
+  const abortActiveChunkRequests = useCallback(() => {
+    activeFetchControllersRef.current.forEach((controller) => {
+      try {
+        controller.abort();
+      } catch {
+        // No-op: best-effort abort for in-flight chunk PUTs.
+      }
+    });
+    activeFetchControllersRef.current.clear();
+  }, []);
 
   const resetAdaptiveMetrics = useCallback(() => {
     speedSamplesRef.current = [];
@@ -271,18 +284,39 @@ export function useChunkedUpload() {
     return preparedSessionRef.current;
   }, [ensureFileTypeAllowed]);
 
-  const uploadChunk = async (chunk, fileId, fileKey, uploadId, retryCount = 0) => {
+  const uploadChunk = async (chunk, fileId, fileKey, uploadId, runId, retryCount = 0) => {
     try {
+      if (runId !== uploadRunIdRef.current) {
+        const staleError = new Error("Stale upload run");
+        staleError.code = "STALE_UPLOAD_RUN";
+        throw staleError;
+      }
+
       const { url } = await getPresignedUrl(fileKey, uploadId, chunk.partNumber);
 
       const startTime = Date.now();
+      const controller = new AbortController();
+      activeFetchControllersRef.current.add(controller);
 
-      const response = await fetch(url, {
-        method: "PUT",
-        body: chunk.blob,
-        headers: { "Content-Type": "application/octet-stream" },
-      });
+      let response;
+      try {
+        response = await fetch(url, {
+          method: "PUT",
+          body: chunk.blob,
+          headers: { "Content-Type": "application/octet-stream" },
+          signal: controller.signal,
+        });
+      } finally {
+        activeFetchControllersRef.current.delete(controller);
+      }
+
       const endTime = Date.now();
+
+      if (runId !== uploadRunIdRef.current) {
+        const staleError = new Error("Stale upload run");
+        staleError.code = "STALE_UPLOAD_RUN";
+        throw staleError;
+      }
 
       if (!response.ok) {
         const s3Error = new Error(`S3 returned ${response.status}`);
@@ -293,11 +327,27 @@ export function useChunkedUpload() {
       const etag = response.headers.get("ETag");
       if (!etag) throw new Error("No ETag returned from S3");
 
+      if (runId !== uploadRunIdRef.current) {
+        const staleError = new Error("Stale upload run");
+        staleError.code = "STALE_UPLOAD_RUN";
+        throw staleError;
+      }
+
       await updatePart(fileId, fileKey, uploadId, chunk.partNumber, etag);
       applyAdaptiveTelemetry(chunk.blob.size, endTime - startTime);
       
       return { ETag: etag, PartNumber: chunk.partNumber };
     } catch (err) {
+      if (err?.name === "AbortError") {
+        const aborted = new Error("Chunk upload aborted");
+        aborted.code = "STALE_UPLOAD_RUN";
+        throw aborted;
+      }
+
+      if (err?.code === "STALE_UPLOAD_RUN") {
+        throw err;
+      }
+
       const status = extractStatus(err);
 
       if (status === 401 || status === 403) {
@@ -315,7 +365,7 @@ export function useChunkedUpload() {
       if (retryCount < MAX_RETRIES) {
         const delay = RETRY_BASE_DELAY * Math.pow(2, retryCount);
         await new Promise((r) => setTimeout(r, delay));
-        return uploadChunk(chunk, fileId, fileKey, uploadId, retryCount + 1);
+        return uploadChunk(chunk, fileId, fileKey, uploadId, runId, retryCount + 1);
       }
 
       const exhaustedError = new Error("Chunk upload failed after maximum retries");
@@ -327,7 +377,7 @@ export function useChunkedUpload() {
     }
   };
 
-  const uploadWithPool = async (chunks, fileId, fileKey, uploadId, completedPartNumbers, totalPartsHint = 0) => {
+  const uploadWithPool = async (chunks, fileId, fileKey, uploadId, runId, completedPartNumbers, totalPartsHint = 0) => {
     const completedSet = completedPartNumbers instanceof Set
       ? completedPartNumbers
       : new Set(completedPartNumbers || []);
@@ -370,8 +420,12 @@ export function useChunkedUpload() {
 
       setOneStatus(chunk.partNumber, "uploading");
 
-      return uploadChunk(chunk, fileId, fileKey, uploadId)
+      return uploadChunk(chunk, fileId, fileKey, uploadId, runId)
         .then((result) => {
+          if (runId !== uploadRunIdRef.current) {
+            return;
+          }
+
           setOneStatus(chunk.partNumber, "completed");
           completedSet.add(chunk.partNumber);
           parts.push(result);
@@ -381,6 +435,10 @@ export function useChunkedUpload() {
           return processNext();
         })
         .catch((err) => {
+          if (err?.code === "STALE_UPLOAD_RUN") {
+            return;
+          }
+
           setOneStatus(chunk.partNumber, "error");
           hasError = err;
         });
@@ -402,6 +460,10 @@ export function useChunkedUpload() {
 
   const upload = useCallback(async (file, selectedBucketName = null) => {
     if (!file || activeUploadRef.current) return;
+
+    const currentRunId = uploadRunIdRef.current + 1;
+    uploadRunIdRef.current = currentRunId;
+    abortActiveChunkRequests();
 
     activeUploadRef.current = true;
     fileRef.current = file;
@@ -468,22 +530,33 @@ export function useChunkedUpload() {
 
       preparedSessionRef.current = null;
 
+      if (currentRunId !== uploadRunIdRef.current) return;
+
       setUploadInfo({ uploadId, fileKey });
 
       const { parts, complete } = await uploadWithPool(
-        chunks, fileId, fileKey, uploadId, completedPartNumbers, totalParts
+        chunks, fileId, fileKey, uploadId, currentRunId, completedPartNumbers, totalParts
       );
+
+      if (currentRunId !== uploadRunIdRef.current) return;
 
       if (!complete) return; 
 
       const finalChecksum = (await checksumPromise) || PENDING_CHECKSUM;
       await completeUpload(fileId, fileKey, uploadId, file.name, file.size, parts, finalChecksum);
+
+      if (currentRunId !== uploadRunIdRef.current) return;
+
       setStatus("completed");
       setProgress(100);
       setUploadInfo(null);
       checksumPromisesRef.current.delete(fileId);
       fileValidationPromisesRef.current.delete(fileId);
     } catch (err) {
+      if (err?.code === "STALE_UPLOAD_RUN" || currentRunId !== uploadRunIdRef.current) {
+        return;
+      }
+
       if (isPausedRef.current) return;
 
       safeChunkSizeBytesRef.current = MIN_S3_CHUNK_MB * MB_BYTES;
@@ -496,9 +569,11 @@ export function useChunkedUpload() {
       setErrorMeta(normalizedError);
       setStatus("error");
     } finally {
-      activeUploadRef.current = false;
+      if (currentRunId === uploadRunIdRef.current) {
+        activeUploadRef.current = false;
+      }
     }
-  }, [ensureFileTypeAllowed, getOrCreateChecksumPromise, resetAdaptiveMetrics]);
+  }, [ensureFileTypeAllowed, getOrCreateChecksumPromise, resetAdaptiveMetrics, abortActiveChunkRequests]);
 
   const pause = useCallback(() => {
     isPausedRef.current = true;
@@ -512,6 +587,8 @@ export function useChunkedUpload() {
   const cancel = useCallback(async () => {
     isPausedRef.current = true;
     activeUploadRef.current = false;
+    uploadRunIdRef.current += 1;
+    abortActiveChunkRequests();
     preparedSessionRef.current = null;
     if (fileRef.current) {
       checksumPromisesRef.current.delete(buildFileId(fileRef.current));
@@ -528,7 +605,7 @@ export function useChunkedUpload() {
     setErrorMeta(null);
     setUploadInfo(null);
     resetAdaptiveMetrics();
-  }, [uploadInfo, resetAdaptiveMetrics]);
+  }, [uploadInfo, resetAdaptiveMetrics, abortActiveChunkRequests]);
 
   return {
     status,
