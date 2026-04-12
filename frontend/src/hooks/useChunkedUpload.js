@@ -709,8 +709,8 @@ export function useChunkedUpload() {
     setStatus("paused");
   }, []);
 
-  const resume = useCallback(() => {
-    if (fileRef.current) upload(fileRef.current, null);
+  const resume = useCallback((selectedBucketName = null) => {
+    if (fileRef.current) upload(fileRef.current, selectedBucketName);
   }, [upload]);
 
   const cancel = useCallback(async () => {

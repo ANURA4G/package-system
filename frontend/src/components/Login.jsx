@@ -19,7 +19,7 @@ export default function Login({ onLogin }) {
         // Login immediately after register
       }
       const data = await loginUser(username, password);
-      localStorage.setItem("token", data.access_token);
+      sessionStorage.setItem("token", data.access_token);
       onLogin(data.access_token);
     } catch (err) {
       setError(err.response?.data?.detail || "Authentication failed");
