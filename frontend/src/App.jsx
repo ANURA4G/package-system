@@ -14,6 +14,7 @@ import "./App.css";
 const TOAST_TTL_MS = 7000;
 const COMPLETION_REFRESH_MS = 5000;
 const BYTES_PER_GB = 1024 * 1024 * 1024;
+const DELETE_BUCKET_CONFIRM_PHRASE = "Delete Bucket";
 const BUCKET_NAME_REGEX = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const REGION_FORMAT_REGEX = /^[a-z]{2}-[a-z]+-\d+$/;
 
@@ -132,7 +133,7 @@ function getDetailMessage(error, fallback) {
 }
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [token, setToken] = useState(sessionStorage.getItem("token"));
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -147,6 +148,8 @@ function App() {
   const [dataError, setDataError] = useState(null);
   const [bucketSaving, setBucketSaving] = useState(false);
   const [bucketDeletingId, setBucketDeletingId] = useState(null);
+  const [bucketDeleteTarget, setBucketDeleteTarget] = useState(null);
+  const [bucketDeleteConfirmText, setBucketDeleteConfirmText] = useState("");
   const [bucketUpdating, setBucketUpdating] = useState(false);
   const [selectedUploadBucket, setSelectedUploadBucket] = useState("");
   const [uploadGrowthFilter, setUploadGrowthFilter] = useState("all");
@@ -219,7 +222,7 @@ function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem("token");
+    sessionStorage.removeItem("token");
     setToken(null);
     setCurrentUser(null);
     setActiveTab("dashboard");
@@ -287,9 +290,14 @@ function App() {
 
     if (!selectedFile) return;
 
+    const normalizedBucket = selectedUploadBucket.trim();
+    if (!normalizedBucket) {
+      pushToast("warning", "Bucket Required", "Select an upload bucket before preparing a file.");
+      return;
+    }
+
     try {
-      const normalizedBucket = selectedUploadBucket.trim();
-      await prepareUpload(selectedFile, normalizedBucket || null);
+      await prepareUpload(selectedFile, normalizedBucket);
     } catch (err) {
       if (err?.code === "FILE_TYPE_NOT_ALLOWED") {
         setFile(null);
@@ -314,6 +322,13 @@ function App() {
 
     await cancel();
     setShowPreview(false);
+
+    const normalizedBucket = selectedUploadBucket.trim();
+    if (!normalizedBucket) {
+      pushToast("warning", "Bucket Required", "Select an upload bucket before preparing a folder.");
+      return;
+    }
+
     setIsPreparingFolder(true);
 
     try {
@@ -346,8 +361,7 @@ function App() {
       });
 
       setFile(zipFile);
-      const normalizedBucket = selectedUploadBucket.trim();
-      await prepareUpload(zipFile, normalizedBucket || null);
+      await prepareUpload(zipFile, normalizedBucket);
 
       pushToast(
         "success",
@@ -369,10 +383,23 @@ function App() {
   const handleUpload = useCallback(() => {
     if (file) {
       const normalizedBucket = selectedUploadBucket.trim();
-      console.debug("[upload-ui] Start Upload clicked with bucket", normalizedBucket || "MediVault Bucket");
-      upload(file, normalizedBucket || null);
+      if (!normalizedBucket) {
+        pushToast("warning", "Bucket Required", "Select an upload bucket before starting upload.");
+        return;
+      }
+      console.debug("[upload-ui] Start Upload clicked with bucket", normalizedBucket);
+      upload(file, normalizedBucket);
     }
-  }, [file, selectedUploadBucket, upload]);
+  }, [file, pushToast, selectedUploadBucket, upload]);
+
+  const handleResumeUpload = useCallback(() => {
+    const normalizedBucket = selectedUploadBucket.trim();
+    if (!normalizedBucket) {
+      pushToast("warning", "Bucket Required", "Select the original upload bucket before resuming.");
+      return;
+    }
+    resume(normalizedBucket);
+  }, [pushToast, resume, selectedUploadBucket]);
 
   const handleCancel = useCallback(() => {
     cancel();
@@ -380,7 +407,7 @@ function App() {
     setShowPreview(false);
   }, [cancel]);
 
-  const activeUploadBucketLabel = uploadInfo?.bucketName || selectedUploadBucket || "MediVault Bucket";
+  const activeUploadBucketLabel = uploadInfo?.bucketName || selectedUploadBucket || "None";
 
   useEffect(() => {
     if (!errorMeta) return;
@@ -834,41 +861,55 @@ function App() {
       setBucketFormTouched({});
       setBucketAdvancedOpen(false);
       await fetchWorkspaceData();
-
-      if (!selectedUploadBucket) {
-        setSelectedUploadBucket(payload.bucket_name);
-      }
     } catch (err) {
       pushToast("error", "Bucket Save Failed", getDetailMessage(err, "Could not save bucket credentials."));
     } finally {
       setBucketSaving(false);
     }
-  }, [bucketForm, bucketSaving, fetchWorkspaceData, pushToast, selectedUploadBucket]);
+  }, [bucketForm, bucketSaving, fetchWorkspaceData, pushToast]);
 
   const handleDeleteBucket = useCallback(async (bucket) => {
-    if (!bucket?.id || bucketDeletingId) return;
+    if (!bucket?.id || bucketDeletingId || bucket.system_default) return;
+    setBucketDeleteTarget(bucket);
+    setBucketDeleteConfirmText("");
+  }, [bucketDeletingId]);
 
-    const confirmation = window.confirm(
-      `Delete bucket '${bucket.bucket_name}' from saved credentials?`
-    );
-    if (!confirmation) return;
+  const handleCloseDeleteBucketModal = useCallback(() => {
+    if (bucketDeletingId) return;
+    setBucketDeleteTarget(null);
+    setBucketDeleteConfirmText("");
+  }, [bucketDeletingId]);
 
-    setBucketDeletingId(bucket.id);
+  const canConfirmBucketDelete = bucketDeleteConfirmText.trim() === DELETE_BUCKET_CONFIRM_PHRASE;
+
+  const handleConfirmDeleteBucket = useCallback(async () => {
+    if (!bucketDeleteTarget?.id || bucketDeletingId || !canConfirmBucketDelete) return;
+
+    setBucketDeletingId(bucketDeleteTarget.id);
     try {
-      const result = await deleteBucket(bucket.id);
-      pushToast("success", "Bucket Deleted", result?.message || "Bucket removed successfully.");
+      await deleteBucket(bucketDeleteTarget.id);
+      pushToast("success", "Bucket Deleted", "Bucket removed successfully");
 
-      if (selectedUploadBucket === bucket.bucket_name) {
+      if (selectedUploadBucket === bucketDeleteTarget.bucket_name) {
         setSelectedUploadBucket("");
       }
 
       await fetchWorkspaceData();
+      handleCloseDeleteBucketModal();
     } catch (err) {
       pushToast("error", "Delete Failed", getDetailMessage(err, "Could not delete bucket."));
     } finally {
       setBucketDeletingId(null);
     }
-  }, [bucketDeletingId, fetchWorkspaceData, pushToast, selectedUploadBucket]);
+  }, [
+    bucketDeleteTarget,
+    bucketDeletingId,
+    canConfirmBucketDelete,
+    fetchWorkspaceData,
+    handleCloseDeleteBucketModal,
+    pushToast,
+    selectedUploadBucket,
+  ]);
 
   const handleOpenEditBucket = useCallback((bucket) => {
     if (!bucket?.id || bucket.system_default) return;
@@ -1312,7 +1353,7 @@ function App() {
               value={selectedUploadBucket}
               onChange={(event) => setSelectedUploadBucket(event.target.value)}
             >
-              <option value="">MediVault Bucket</option>
+              <option value="">None</option>
               {buckets.filter((bucket) => !bucket.system_default).map((bucket) => (
                 <option key={bucket.id} value={bucket.bucket_name}>
                   {bucket.bucket_name} ({bucket.region || "-"})
@@ -1331,7 +1372,7 @@ function App() {
             status={status}
             onUpload={handleUpload}
             onPause={pause}
-            onResume={resume}
+            onResume={handleResumeUpload}
             onCancel={handleCancel}
             onPreview={() => setShowPreview(true)}
             isPreparingFolder={isPreparingFolder}
@@ -1640,7 +1681,7 @@ function App() {
                       </td>
                       <td className="px-6 py-5 text-xs font-bold uppercase tracking-wide text-on-surface-variant">{bucket.region || "-"}</td>
                       <td className="px-6 py-5 text-xs font-bold uppercase tracking-wide">
-                        {bucket.validation_status === "pending_network_validation" ? (
+                        {bucket.validation_status && bucket.validation_status !== "verified" ? (
                           <span className="text-warning">Pending AWS Validation</span>
                         ) : (
                           <span className="text-teal-600">Verified</span>
@@ -1675,6 +1716,51 @@ function App() {
           </div>
         </section>
       </div>
+
+      {bucketDeleteTarget ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-md rounded-xl bg-surface-container-lowest border border-surface-container-high shadow-xl p-6">
+            <h3 className="text-lg font-bold text-primary headline">Confirm Bucket Removal</h3>
+            <p className="mt-2 text-sm font-medium text-on-surface-variant">
+              This will remove the bucket configuration from MediVault.
+              It will not delete the actual AWS bucket or stored files.
+            </p>
+            <p className="mt-3 text-xs font-semibold text-on-surface-variant">
+              Type "{DELETE_BUCKET_CONFIRM_PHRASE}" to confirm.
+            </p>
+
+            <input
+              className="mt-2 w-full rounded-lg bg-surface-container-highest px-3 py-2.5 text-sm border border-surface-container-high"
+              value={bucketDeleteConfirmText}
+              onChange={(event) => setBucketDeleteConfirmText(event.target.value)}
+              placeholder={DELETE_BUCKET_CONFIRM_PHRASE}
+            />
+
+            {bucketDeleteConfirmText.length > 0 && !canConfirmBucketDelete ? (
+              <p className="mt-1 text-[11px] text-error font-semibold">Please type Delete Bucket exactly</p>
+            ) : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseDeleteBucketModal}
+                disabled={Boolean(bucketDeletingId)}
+                className="rounded-lg bg-surface-container-high text-primary px-4 py-2 text-xs font-bold disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteBucket}
+                disabled={!canConfirmBucketDelete || bucketDeletingId === bucketDeleteTarget.id}
+                className="rounded-lg bg-error-container text-error px-4 py-2 text-xs font-bold disabled:opacity-60"
+              >
+                {bucketDeletingId === bucketDeleteTarget.id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {bucketEditForm.bucket_id ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4">

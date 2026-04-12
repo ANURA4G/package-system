@@ -893,6 +893,14 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
     validation_status = "verified"
     success_message = "Bucket credentials saved securely"
 
+    def _defer_failed_validation() -> None:
+        nonlocal validation_status, success_message
+        validation_status = "pending_manual_validation"
+        success_message = (
+            "Bucket saved, but AWS rejected validation for the provided credentials/bucket. "
+            "Update credentials if uploads fail."
+        )
+
     if use_kms and not kms_key_id:
         raise HTTPException(status_code=400, detail="kms_key_id is required when use_kms is enabled")
 
@@ -938,7 +946,13 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
                 retry_client.head_bucket(Bucket=bucket_name)
                 resolved_region = detected_region
             except ClientError as retry_error:
-                _raise_bucket_validation_error(retry_error)
+                try:
+                    _raise_bucket_validation_error(retry_error)
+                except HTTPException as validation_error:
+                    if validation_error.status_code in {401, 403, 404}:
+                        _defer_failed_validation()
+                    else:
+                        raise
             except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError, BotoCoreError):
                 resolved_region = detected_region
                 validation_status = "pending_network_validation"
@@ -947,7 +961,13 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
                     f"Detected region '{detected_region}' was stored."
                 )
         else:
-            _raise_bucket_validation_error(e)
+            try:
+                _raise_bucket_validation_error(e)
+            except HTTPException as validation_error:
+                if validation_error.status_code in {401, 403, 404}:
+                    _defer_failed_validation()
+                else:
+                    raise
     except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError, BotoCoreError):
         validation_status = "pending_network_validation"
         success_message = "Bucket saved, but AWS connectivity prevented live validation"
