@@ -48,6 +48,7 @@ from app.database import upload_sessions_collection, uploads_collection, bucket_
 from app.config import get_settings
 from app.rate_limit import limiter
 from app.encryption_utils import encrypt_value, decrypt_value
+from app.security_utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/upload", tags=["Upload"])
@@ -432,6 +433,73 @@ def _raise_bucket_validation_error(error: ClientError):
     raise HTTPException(status_code=400, detail="Unable to validate bucket credentials")
 
 
+def _validate_bucket_public_access_settings(s3_client, bucket_name: str):
+    """Reject buckets that can be publicly exposed.
+
+    Requires strict public access block and non-public bucket policy status.
+    """
+    try:
+        pab = s3_client.get_public_access_block(Bucket=bucket_name)
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchPublicAccessBlockConfiguration", "NoSuchPublicAccessBlock"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Bucket must enforce all S3 Public Access Block settings. "
+                    "Enable block public ACLs and block public bucket policies."
+                ),
+            )
+        if code in {"AccessDenied", "AllAccessDisabled"}:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Unable to validate bucket public access settings. "
+                    "Grant s3:GetBucketPublicAccessBlock and s3:GetBucketPolicyStatus."
+                ),
+            )
+        raise
+
+    config = pab.get("PublicAccessBlockConfiguration") or {}
+    required = {
+        "BlockPublicAcls": True,
+        "IgnorePublicAcls": True,
+        "BlockPublicPolicy": True,
+        "RestrictPublicBuckets": True,
+    }
+    missing = [key for key, required_value in required.items() if bool(config.get(key)) != required_value]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Bucket public access settings are not strict enough. "
+                f"Enable: {', '.join(missing)}"
+            ),
+        )
+
+    try:
+        policy_status = s3_client.get_bucket_policy_status(Bucket=bucket_name)
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchBucketPolicy", "NoSuchPolicy"}:
+            return
+        if code in {"AccessDenied", "AllAccessDisabled"}:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Unable to validate bucket policy public status. "
+                    "Grant s3:GetBucketPolicyStatus."
+                ),
+            )
+        raise
+
+    if bool(policy_status.get("PolicyStatus", {}).get("IsPublic", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="Bucket policy is public. Disable public bucket policy access before adding this bucket.",
+        )
+
+
 def _parse_uploads_query_timestamp(value: str, field_name: str) -> str:
     raw_value = (value or "").strip()
     if not raw_value:
@@ -452,11 +520,22 @@ def _parse_uploads_query_timestamp(value: str, field_name: str) -> str:
 @limiter.limit("30/minute")
 async def start_upload(request: Request, payload: StartUploadRequest, username: str = Depends(get_current_user)):
     try:
-        extension = _extract_extension(payload.file_name)
+        settings = get_settings()
+        sanitized_file_name = sanitize_filename(payload.file_name)
+
+        extension = _extract_extension(sanitized_file_name)
         if extension not in ALLOWED_UPLOAD_EXTENSIONS and not _is_folder_relative_path(payload.file_name):
             raise HTTPException(
                 status_code=415,
                 detail="Unsupported file extension. Allowed extensions: .dcm, .dicom, .jpg, .jpeg, .png, .pdf, .zip",
+            )
+
+        if payload.size > settings.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File size exceeds limit. Max allowed is {settings.MAX_FILE_SIZE_BYTES} bytes"
+                ),
             )
 
         selected_bucket_id, selected_bucket_name = _normalize_bucket_selector(payload.bucket_id, payload.bucket_name)
@@ -466,7 +545,7 @@ async def start_upload(request: Request, payload: StartUploadRequest, username: 
             bucket_name=selected_bucket_name,
         )
         result = initiate_multipart_upload(
-            payload.file_name,
+            sanitized_file_name,
             payload.content_type,
             username,
             s3_client=s3_client,
@@ -479,7 +558,7 @@ async def start_upload(request: Request, payload: StartUploadRequest, username: 
         upload_sessions_collection.insert_one({
             "user_id": username,
             "file_id": payload.file_id,
-            "filename": payload.file_name,
+            "filename": sanitized_file_name,
             "bucket_id": bucket_id,
             "bucket_name": bucket_name,
             "use_kms": use_kms,
@@ -867,7 +946,7 @@ async def complete_upload(request: Request, payload: CompleteUploadRequest, user
             "user_id": username,
             "file_id": payload.file_id,
             "file_key": payload.file_key,
-            "filename": session_filename or payload.file_name,
+            "filename": session_filename or sanitize_filename(payload.file_name),
             "size": expected_size,
             "checksum": final_checksum,
             "expected_size": expected_size,
@@ -1438,6 +1517,7 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
             region_name=resolved_region,
         )
         s3.head_bucket(Bucket=bucket_name)
+        _validate_bucket_public_access_settings(s3, bucket_name)
     except ClientError as e:
         detected_region = _extract_bucket_region_from_error(e)
         current_code = str(e.response.get("Error", {}).get("Code", ""))
@@ -1458,6 +1538,7 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
                     region_name=detected_region,
                 )
                 retry_client.head_bucket(Bucket=bucket_name)
+                _validate_bucket_public_access_settings(retry_client, bucket_name)
                 resolved_region = detected_region
             except ClientError as retry_error:
                 try:

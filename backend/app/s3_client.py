@@ -7,6 +7,7 @@ from functools import lru_cache
 from botocore.config import Config
 from app.config import get_settings
 from app import mock_s3_service
+from app.security_utils import sanitize_filename
 
 
 _SAFE_COMPONENT_REGEX = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -23,20 +24,7 @@ def _sanitize_path_component(value: str, fallback: str = "unknown") -> str:
 
 
 def _sanitize_filename(file_name: str, fallback: str = "file") -> str:
-    # Keep only basename to avoid user-controlled path fragments like ../
-    raw = (file_name or "").replace("\\", "/").split("/")[-1].strip().lstrip(".")
-    cleaned = _SAFE_COMPONENT_REGEX.sub("_", raw).strip("._")
-    if not cleaned:
-        return fallback
-
-    if len(cleaned) > 160:
-        if "." in cleaned:
-            stem, ext = cleaned.rsplit(".", 1)
-            cleaned = f"{stem[:140]}.{ext[:16]}"
-        else:
-            cleaned = cleaned[:160]
-
-    return cleaned
+    return sanitize_filename(file_name, fallback=fallback, max_length=160)
 
 
 @lru_cache()
