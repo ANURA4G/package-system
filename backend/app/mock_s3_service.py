@@ -190,6 +190,62 @@ def generate_presigned_get_url(file_key: str) -> str:
     return f"mock://{file_key}"
 
 
+def delete_object(file_key: str) -> dict:
+    with _state_lock:
+        state = _load_state()
+        removed = False
+
+        for upload_id in list(state.get("completed", {}).keys()):
+            completed_entry = state["completed"].get(upload_id) or {}
+            if completed_entry.get("file_key") == file_key:
+                state["completed"].pop(upload_id, None)
+                removed = True
+
+        for upload_id in list(state.get("uploads", {}).keys()):
+            upload_entry = state["uploads"].get(upload_id) or {}
+            if upload_entry.get("file_key") == file_key:
+                state["uploads"].pop(upload_id, None)
+                removed = True
+
+        if removed:
+            _save_state(state)
+
+    return {"message": "File deleted successfully", "file_key": file_key}
+
+
+def delete_prefix(prefix: str) -> dict:
+    normalized_prefix = (prefix or "").strip()
+    if not normalized_prefix:
+        raise ValueError("Invalid prefix")
+
+    with _state_lock:
+        state = _load_state()
+        deleted_count = 0
+
+        for upload_id in list(state.get("completed", {}).keys()):
+            completed_entry = state["completed"].get(upload_id) or {}
+            file_key = completed_entry.get("file_key") or ""
+            if file_key.startswith(normalized_prefix):
+                state["completed"].pop(upload_id, None)
+                deleted_count += 1
+
+        for upload_id in list(state.get("uploads", {}).keys()):
+            upload_entry = state["uploads"].get(upload_id) or {}
+            file_key = upload_entry.get("file_key") or ""
+            if file_key.startswith(normalized_prefix):
+                state["uploads"].pop(upload_id, None)
+                deleted_count += 1
+
+        if deleted_count > 0:
+            _save_state(state)
+
+    return {
+        "message": "Prefix deleted successfully",
+        "prefix": normalized_prefix,
+        "deleted_count": deleted_count,
+    }
+
+
 def get_upload(upload_id: str):
     with _state_lock:
         state = _load_state()

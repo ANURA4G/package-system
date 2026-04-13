@@ -79,11 +79,59 @@ class AbortUploadResponse(BaseModel):
 
 # ── File Preview URL ──────────────────────────────────────────
 class FileUrlRequest(BaseModel):
-    file_key: str = Field(..., min_length=1, max_length=1024)
+    file_key: str | None = Field(default=None, min_length=1, max_length=1024)
+    file_id: str | None = Field(default=None, min_length=1, max_length=512)
+    upload_record_id: str | None = Field(default=None, min_length=1, max_length=64)
+    bucket_id: str | None = Field(default=None, min_length=1, max_length=64)
+    bucket_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 class FileUrlResponse(BaseModel):
     url: str
     file_key: str
+    expires_in: int = Field(default=3600, ge=1)
+
+
+class DeleteFileResponse(BaseModel):
+    message: str
+    upload_record_id: str
+    file_key: str
+
+
+class DeleteFileByKeyRequest(BaseModel):
+    file_key: str = Field(..., min_length=1, max_length=1024)
+    bucket_id: str | None = Field(default=None, min_length=1, max_length=64)
+    bucket_name: str | None = Field(default=None, min_length=1, max_length=255)
+    delete_scope: str = Field(default="object", pattern="^(object|prefix)$")
+
+
+class DeleteFileByKeyResponse(BaseModel):
+    message: str
+    file_key: str
+    deleted_history_records: int = Field(default=0, ge=0)
+    deleted_s3_objects: int = Field(default=0, ge=0)
+
+
+class DeleteHistoryRecordResponse(BaseModel):
+    message: str
+    upload_record_id: str
+
+
+class ClearHistoryResponse(BaseModel):
+    message: str
+    cleared_records: int = Field(default=0, ge=0)
+
+
+class BucketFileSummary(BaseModel):
+    file_key: str
+    file_name: str
+    size: int = Field(default=0, ge=0)
+    last_modified: str | None = None
+    bucket_name: str
+
+
+class BucketFileListResponse(BaseModel):
+    bucket_name: str
+    files: List[BucketFileSummary] = Field(default_factory=list)
 
 
 # ── Bucket Credentials ───────────────────────────────────────
