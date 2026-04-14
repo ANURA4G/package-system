@@ -35,7 +35,7 @@ Responses:
 
 ### POST /auth/login
 
-Authenticates user and returns token.
+Authenticates user and returns access token. Also sets an HttpOnly `refresh_token` cookie for silent renewal.
 
 Request body:
 
@@ -51,7 +51,39 @@ Response body:
 ```json
 {
   "access_token": "<jwt>",
-  "token_type": "bearer"
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+```
+
+### POST /auth/refresh
+
+Silently renews the access token using the HttpOnly refresh cookie. Rotates the refresh token on each call.
+
+Response body:
+
+```json
+{
+  "access_token": "<new-jwt>",
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+```
+
+Responses:
+
+- 200: new access token issued
+- 401: refresh token missing, expired, or revoked
+
+### POST /auth/logout
+
+Revokes the current refresh token and clears the cookie.
+
+Response body:
+
+```json
+{
+  "message": "Logged out successfully"
 }
 ```
 

@@ -68,3 +68,63 @@ export function clearUploadState(file) {
   const key = _buildKey(file);
   localStorage.removeItem(key);
 }
+
+// ── Auth Session Helpers ──────────────────────────────────────────────────────
+
+const AUTH_TOKEN_KEY = "token";
+const AUTH_EXPIRES_AT_KEY = "token_expires_at";
+
+/**
+ * Persist the access token and its expiry time to sessionStorage.
+ * @param {string} accessToken  - The JWT access token.
+ * @param {number} expiresIn    - Lifetime in seconds (from the server's expires_in field).
+ */
+export function storeAuthSession(accessToken, expiresIn) {
+  try {
+    sessionStorage.setItem(AUTH_TOKEN_KEY, accessToken);
+    if (expiresIn && expiresIn > 0) {
+      const expiresAt = Date.now() + expiresIn * 1000;
+      sessionStorage.setItem(AUTH_EXPIRES_AT_KEY, String(expiresAt));
+    }
+  } catch {
+    // Ignore storage write failures in restricted browser contexts.
+  }
+}
+
+/**
+ * Retrieve the stored access token, or null if absent.
+ */
+export function getAccessToken() {
+  try {
+    return sessionStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return the timestamp (ms since epoch) at which the stored access token expires,
+ * or null if not known.
+ */
+export function getTokenExpiresAt() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_EXPIRES_AT_KEY);
+    if (!raw) return null;
+    const ts = Number(raw);
+    return Number.isFinite(ts) ? ts : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove all auth session data from sessionStorage.
+ */
+export function clearAuthSession() {
+  try {
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    sessionStorage.removeItem(AUTH_EXPIRES_AT_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}

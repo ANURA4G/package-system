@@ -1,19 +1,41 @@
 import axios from "axios";
+import { getAccessToken, storeAuthSession } from "../utils/storage";
+import { silentRefresh } from "./authApi";
 
 const API_BASE = import.meta.env.VITE_API_UPLOAD_BASE || "/api/upload";
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
+  withCredentials: true, // needed for HttpOnly refresh cookie
 });
 
 api.interceptors.request.use((config) => {
-  const token = sessionStorage.getItem("token");
+  const token = getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
+
+// Retry once after silent refresh on 401.
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status === 401 && !original._retried) {
+      original._retried = true;
+      try {
+        const newToken = await silentRefresh();
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
+      } catch {
+        // Refresh failed — propagate the original 401.
+      }
+    }
+    return Promise.reject(error);
+  },
+);
 
 export async function startUpload(
   fileId,
