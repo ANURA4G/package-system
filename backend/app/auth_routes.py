@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, Response
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 from app.database import users_collection, refresh_tokens_collection
 from app.auth import get_password_hash, verify_password, create_access_token, create_refresh_token, decode_refresh_token, get_current_user
@@ -53,12 +53,12 @@ async def login(request: Request, response: Response, user: UserCredentials):
 
     # Store hashed refresh token in DB for rotation/revocation
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-    expires_at = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     refresh_tokens_collection.insert_one({
         "token_hash": token_hash,
         "username": user.username,
         "expires_at": expires_at,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     })
 
     response.set_cookie(
@@ -103,12 +103,12 @@ async def refresh(request: Request, response: Response):
     new_refresh_token = create_refresh_token(data={"sub": username})
 
     new_token_hash = hashlib.sha256(new_refresh_token.encode()).hexdigest()
-    expires_at = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     refresh_tokens_collection.insert_one({
         "token_hash": new_token_hash,
         "username": username,
         "expires_at": expires_at,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     })
 
     response.set_cookie(

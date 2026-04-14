@@ -22,6 +22,7 @@ const REGION_FORMAT_REGEX = /^[a-z]{2}-[a-z]+-\d+$/;
 const THEME_STORAGE_KEY = "theme";
 const THEME_DARK = "dark";
 const THEME_LIGHT = "light";
+const REFRESH_BEFORE_EXPIRY_MS = 2 * 60 * 1000; // Refresh token 2 minutes before expiry
 
 function getInitialTheme() {
   try {
@@ -522,7 +523,7 @@ function App() {
     const schedule = () => {
       const expiresAt = getTokenExpiresAt();
       if (!expiresAt) return null;
-      const msUntilRefresh = expiresAt - Date.now() - 2 * 60 * 1000; // 2 min early
+      const msUntilRefresh = expiresAt - Date.now() - REFRESH_BEFORE_EXPIRY_MS;
       if (msUntilRefresh <= 0) {
         silentRefresh().catch(() => {});
         return null;
