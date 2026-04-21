@@ -110,9 +110,8 @@ npm run dev
 - Auth token is stored in session storage (tab/window close logs out).
 - `docker-compose.yml` currently provisions MongoDB service only.
 
-##devs
-
--Marudhu B
--Anuraag Rai S
--Chandru P
--Muthuvel Mukesh 
+## devs
+- Marudhu B
+- Anuraag Rai S
+- Chandru P
+- Muthuvel Mukesh 
