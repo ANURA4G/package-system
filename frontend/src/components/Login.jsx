@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { loginUser, registerUser } from "../api/authApi";
+import { storeAuthSession } from "../utils/storage";
 import "./Login.css";
 
 export default function Login({ onLogin }) {
@@ -19,7 +20,7 @@ export default function Login({ onLogin }) {
         // Login immediately after register
       }
       const data = await loginUser(username, password);
-      sessionStorage.setItem("token", data.access_token);
+      storeAuthSession(data.access_token, data.expires_in);
       onLogin(data.access_token);
     } catch (err) {
       setError(err.response?.data?.detail || "Authentication failed");

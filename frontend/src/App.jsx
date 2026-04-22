@@ -6,8 +6,9 @@ import UploadStatus from "./components/UploadStatus";
 import FilePreviewModal from "./components/FilePreviewModal";
 import ToastStack from "./components/ToastStack";
 import Login from "./components/Login";
-import { getCurrentUser } from "./api/authApi";
+import { getCurrentUser, logoutUser, silentRefresh } from "./api/authApi";
 import { addBucket, deleteBucket, getBucketUsage, getBuckets, getUploadHistory, updateBucket } from "./api/uploadApi";
+import { getAccessToken, getTokenExpiresAt, clearAuthSession } from "./utils/storage";
 import JSZip from "jszip";
 import "./App.css";
 
@@ -21,6 +22,7 @@ const REGION_FORMAT_REGEX = /^[a-z]{2}-[a-z]+-\d+$/;
 const THEME_STORAGE_KEY = "theme";
 const THEME_DARK = "dark";
 const THEME_LIGHT = "light";
+const REFRESH_BEFORE_EXPIRY_MS = 2 * 60 * 1000; // Refresh token 2 minutes before expiry
 
 function getInitialTheme() {
   try {
@@ -148,7 +150,7 @@ function getDetailMessage(error, fallback) {
 }
 
 function App() {
-  const [token, setToken] = useState(sessionStorage.getItem("token"));
+  const [token, setToken] = useState(getAccessToken);
   const [theme, setTheme] = useState(getInitialTheme);
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -244,7 +246,8 @@ function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
-    sessionStorage.removeItem("token");
+    logoutUser();
+    clearAuthSession();
     setToken(null);
     setCurrentUser(null);
     setActiveTab("dashboard");
@@ -446,12 +449,10 @@ function App() {
     if (errorMeta.kind === "auth") {
       pushToast(
         "warning",
-        "Session Error",
-        "Your token is invalid or expired. Sign in again before retrying the upload."
+        "Session Paused",
+        "Your session token expired during upload. Your progress is saved — sign in again and click Resume to continue."
       );
-
-      // Clear stale token so protected calls do not keep failing with 401.
-      handleLogout();
+      // Do not force logout — the upload is paused so the user can re-authenticate and resume.
       return;
     }
 
@@ -514,6 +515,33 @@ function App() {
       isActive = false;
     };
   }, [token, pushToast, handleLogout]);
+
+  // Proactive silent refresh: renew the access token 2 minutes before it expires.
+  useEffect(() => {
+    if (!token) return;
+
+    const schedule = () => {
+      const expiresAt = getTokenExpiresAt();
+      if (!expiresAt) return null;
+      const msUntilRefresh = expiresAt - Date.now() - REFRESH_BEFORE_EXPIRY_MS;
+      if (msUntilRefresh <= 0) {
+        silentRefresh().catch(() => {});
+        return null;
+      }
+      return window.setTimeout(() => {
+        silentRefresh()
+          .then((newToken) => {
+            setToken(newToken);
+          })
+          .catch(() => {});
+      }, msUntilRefresh);
+    };
+
+    const timerId = schedule();
+    return () => {
+      if (timerId) window.clearTimeout(timerId);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token || !authReady) return;

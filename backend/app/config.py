@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = Field(..., min_length=32)  # must come from env/.env
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60, ge=60, le=1440)
+    REFRESH_TOKEN_SECRET_KEY: str = Field(..., min_length=32)  # separate secret for refresh tokens
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30, ge=1, le=90)
     CORS_ALLOW_ORIGINS: str = "http://localhost:5173"
 
     @field_validator("JWT_SECRET_KEY")
@@ -37,6 +39,20 @@ class Settings(BaseSettings):
         }
         if value.strip().lower() in disallowed:
             raise ValueError("JWT_SECRET_KEY is too weak. Use a strong random value.")
+        return value
+
+    @field_validator("REFRESH_TOKEN_SECRET_KEY")
+    @classmethod
+    def validate_refresh_secret(cls, value: str) -> str:
+        disallowed = {
+            "supersecretkey",
+            "default_secret",
+            "changeme",
+            "secret",
+            "password",
+        }
+        if value.strip().lower() in disallowed:
+            raise ValueError("REFRESH_TOKEN_SECRET_KEY is too weak. Use a strong random value.")
         return value
 
     @field_validator("MONGO_URI")

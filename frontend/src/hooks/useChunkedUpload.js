@@ -3,6 +3,7 @@ import { splitFileIntoChunks } from "../utils/chunker";
 import { computeFileChecksum } from "../utils/checksum";
 import { validateFileTypeByMagicBytes } from "../utils/fileTypeUtils";
 import { startUpload, getPresignedUrl, completeUpload, abortUpload, updatePart, resumeSession } from "../api/uploadApi";
+import { silentRefresh } from "../api/authApi";
 
 const MAX_RETRIES = 3;
 const MAX_CONCURRENT = 5;
@@ -686,6 +687,23 @@ export function useChunkedUpload() {
       }
 
       if (isPausedRef.current) return;
+
+      // On auth failure, attempt a silent token refresh then pause the upload
+      // so the user can re-login and resume without losing progress.
+      if (err?.code === "AUTH_ERROR" || extractStatus(err) === 401 || extractStatus(err) === 403) {
+        try {
+          await silentRefresh();
+        } catch {
+          // Refresh failed — fall through to paused state so user can re-login.
+        }
+        isPausedRef.current = true;
+        setStatus("paused");
+        const normalizedError = normalizeUploadError(err);
+        setError(normalizedError.message);
+        setErrorMeta(normalizedError);
+        activeUploadRef.current = false;
+        return;
+      }
 
       safeChunkSizeBytesRef.current = MIN_S3_CHUNK_MB * MB_BYTES;
       setDisplayChunkMB(DEFAULT_CHUNK_MB);
