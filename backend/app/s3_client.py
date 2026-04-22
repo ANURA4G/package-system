@@ -210,15 +210,94 @@ def generate_presigned_get_url(file_key: str) -> str:
 
     settings = get_settings()
     s3 = _get_s3_client()
+    bucket = settings.S3_BUCKET_NAME
 
     return s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
-            "Bucket": settings.S3_BUCKET_NAME,
+            "Bucket": bucket,
             "Key": file_key,
         },
         ExpiresIn=settings.PRESIGNED_URL_EXPIRY,
     )
+
+
+def generate_presigned_get_url_with_context(
+    file_key: str,
+    *,
+    s3_client: Any,
+    bucket_name: str,
+) -> str:
+    """Generate pre-signed GET URL with explicit per-user bucket credentials context."""
+    if _use_mock_s3():
+        return mock_s3_service.generate_presigned_get_url(file_key)
+
+    settings = get_settings()
+    s3 = s3_client
+
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": bucket_name,
+            "Key": file_key,
+        },
+        ExpiresIn=settings.PRESIGNED_URL_EXPIRY,
+    )
+
+
+def delete_object_with_context(
+    file_key: str,
+    *,
+    s3_client: Any,
+    bucket_name: str,
+) -> dict:
+    """Delete an object using explicit per-user bucket credentials context."""
+    if _use_mock_s3():
+        return mock_s3_service.delete_object(file_key)
+
+    s3 = s3_client
+    s3.delete_object(Bucket=bucket_name, Key=file_key)
+    return {"message": "File deleted successfully", "file_key": file_key}
+
+
+def delete_prefix_with_context(
+    prefix: str,
+    *,
+    s3_client: Any,
+    bucket_name: str,
+) -> dict:
+    """Delete all objects under a prefix path using explicit per-user bucket credentials context."""
+    normalized_prefix = (prefix or "").strip()
+    if not normalized_prefix:
+        raise ValueError("Invalid prefix")
+
+    if _use_mock_s3():
+        return mock_s3_service.delete_prefix(normalized_prefix)
+
+    s3 = s3_client
+    paginator = s3.get_paginator("list_objects_v2")
+    deleted_count = 0
+
+    for page in paginator.paginate(Bucket=bucket_name, Prefix=normalized_prefix):
+        objects = page.get("Contents", [])
+        if not objects:
+            continue
+
+        keys_batch = [{"Key": obj.get("Key")} for obj in objects if obj.get("Key")]
+        if not keys_batch:
+            continue
+
+        s3.delete_objects(
+            Bucket=bucket_name,
+            Delete={"Objects": keys_batch, "Quiet": True},
+        )
+        deleted_count += len(keys_batch)
+
+    return {
+        "message": "Prefix deleted successfully",
+        "prefix": normalized_prefix,
+        "deleted_count": deleted_count,
+    }
 
 
 def upload_part_mock(file_key: str, upload_id: str, part_number: int, body: bytes) -> str:

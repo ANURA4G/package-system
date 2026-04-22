@@ -137,3 +137,113 @@ export async function getBucketUsage(bucketName) {
   return data;
 }
 
+export async function getBucketFiles({ bucketId = null, bucketName = null } = {}) {
+  const params = {};
+  if (bucketId) params.bucket_id = bucketId;
+  if (bucketName) params.bucket_name = bucketName;
+
+  const { data } = await api.get("/bucket-files", { params });
+  return data;
+}
+
+export async function deleteUploadedFile(uploadRecordId) {
+  const { data } = await api.delete(`/file/${encodeURIComponent(uploadRecordId)}`);
+  return data;
+}
+
+export async function deleteFileByKey(payload) {
+  const { data } = await api.post("/file/delete-by-key", payload);
+  return data;
+}
+
+export async function deleteHistoryRecord(uploadRecordId) {
+  const { data } = await api.delete(`/uploads/${encodeURIComponent(uploadRecordId)}`);
+  return data;
+}
+
+export async function clearUploadHistory() {
+  const { data } = await api.post("/uploads/clear-history");
+  return data;
+}
+
+function normalizeFileDownloadResponse(data) {
+  const url = data?.url;
+  if (!url) {
+    throw new Error("Download URL is missing in backend response");
+  }
+
+  return {
+    url,
+    fileKey: data?.file_key || data?.fileKey || null,
+    expiresInSeconds: Number(data?.expires_in || data?.expiresIn || 0) || null,
+  };
+}
+
+function getRecordFileId(record = {}) {
+  return record?.fileId || record?.file_id || null;
+}
+
+function getRecordFileKey(record = {}) {
+  return record?.fileKey || record?.file_key || null;
+}
+
+export async function getFileDownloadUrl(record) {
+  const fileId = getRecordFileId(record);
+  const fileKey = getRecordFileKey(record);
+  const uploadRecordId = record?.id || null;
+  const bucketId = record?.bucket_id || record?.bucketId || null;
+  const bucketName = record?.bucket_name || record?.bucketName || null;
+  let lastError = null;
+
+  if (fileId) {
+    try {
+      const { data } = await api.get("/get-file-url", {
+        params: {
+          fileId,
+          file_id: fileId,
+          upload_record_id: uploadRecordId || undefined,
+          bucket_id: bucketId || undefined,
+          bucket_name: bucketName || undefined,
+        },
+      });
+      return normalizeFileDownloadResponse(data);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (fileKey) {
+    try {
+      const { data } = await api.post("/get-file-url", {
+        file_key: fileKey,
+        fileKey: fileKey,
+        upload_record_id: uploadRecordId || undefined,
+        bucket_id: bucketId || undefined,
+        bucket_name: bucketName || undefined,
+      });
+      return normalizeFileDownloadResponse(data);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (uploadRecordId) {
+    try {
+      const { data } = await api.post("/get-file-url", {
+        upload_record_id: uploadRecordId,
+        bucket_id: bucketId || undefined,
+        bucket_name: bucketName || undefined,
+      });
+      return normalizeFileDownloadResponse(data);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!fileId && !fileKey && !uploadRecordId) {
+    throw new Error("No file reference found for this record");
+  }
+
+  throw lastError || new Error("Failed to get file download URL");
+}
+
