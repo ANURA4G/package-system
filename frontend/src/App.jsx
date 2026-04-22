@@ -1450,6 +1450,13 @@ function App() {
           <UploadStatus
             status={status}
             error={error}
+            errorMeta={errorMeta}
+            onRetry={() => {
+              if (status === "error" && file) {
+                handleResumeUpload();
+              }
+            }}
+            onAbort={handleCancel}
             networkType={networkType}
             displayChunkMB={displayChunkMB}
             etaDisplay={etaDisplay}

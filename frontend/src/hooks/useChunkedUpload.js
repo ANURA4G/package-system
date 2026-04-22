@@ -97,6 +97,28 @@ function normalizeUploadError(err) {
     };
   }
 
+  if (status === 413) {
+    return {
+      kind: "size_limit",
+      status,
+      message: detail || "File size exceeds backend limit.",
+      occurredAt: Date.now(),
+    };
+  }
+
+  if (!status) {
+    const lowered = String(detail || "").toLowerCase();
+    const looksNetwork = lowered.includes("network") || lowered.includes("failed to fetch") || lowered.includes("load failed");
+    return {
+      kind: looksNetwork ? "network" : "generic",
+      status: null,
+      message: looksNetwork
+        ? "Network error while uploading. Check connection and retry."
+        : detail || "Upload failed",
+      occurredAt: Date.now(),
+    };
+  }
+
   return {
     kind: "generic",
     status,

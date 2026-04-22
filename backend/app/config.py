@@ -1,6 +1,15 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 from pydantic import Field, field_validator
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ENV_FILES = (
+    str(_REPO_ROOT / ".env"),
+    str(_BACKEND_ROOT / ".env"),
+)
 
 
 class Settings(BaseSettings):
@@ -49,7 +58,7 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
+    model_config = {"env_file": _ENV_FILES, "env_file_encoding": "utf-8", "extra": "allow"}
 
 
 @lru_cache()
