@@ -1,6 +1,15 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 from pydantic import Field, field_validator
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ENV_FILES = (
+    str(_REPO_ROOT / ".env"),
+    str(_BACKEND_ROOT / ".env"),
+)
 
 
 class Settings(BaseSettings):
@@ -15,6 +24,7 @@ class Settings(BaseSettings):
     USE_MOCK_S3: bool = False
     MOCK_S3_STATE_FILE: str = "tmp/mock_s3_state.json"
     MOCK_S3_PART_FAILURE_RATE: float = Field(default=0.0, ge=0.0, le=1.0)
+    MAX_FILE_SIZE_BYTES: int = Field(default=5 * 1024 * 1024 * 1024, ge=1)
     UPLOAD_CLEANUP_INTERVAL_SECONDS: int = Field(default=300, ge=60, le=86400)
     
     # MongoDB + Auth Config
@@ -49,7 +59,7 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
+    model_config = {"env_file": _ENV_FILES, "env_file_encoding": "utf-8", "extra": "allow"}
 
 
 @lru_cache()

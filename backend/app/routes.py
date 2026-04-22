@@ -18,6 +18,11 @@ from app.schemas import (
     CompleteUploadRequest, CompleteUploadResponse,
     AbortUploadRequest, AbortUploadResponse,
     FileUrlRequest, FileUrlResponse,
+    DeleteFileResponse,
+    DeleteFileByKeyRequest,
+    DeleteFileByKeyResponse,
+    DeleteHistoryRecordResponse,
+    ClearHistoryResponse,
     UpdatePartRequest, UpdatePartResponse,
     ResumeSessionResponse,
     AddBucketRequest, AddBucketResponse,
@@ -25,6 +30,7 @@ from app.schemas import (
     UpdateBucketRequest,
     DeleteBucketResponse,
     BucketUsageResponse,
+    BucketFileListResponse,
 )
 from app.s3_client import (
     create_s3_client,
@@ -32,7 +38,9 @@ from app.s3_client import (
     generate_presigned_url,
     complete_multipart_upload,
     abort_multipart_upload,
-    generate_presigned_get_url,
+    generate_presigned_get_url_with_context,
+    delete_object_with_context,
+    delete_prefix_with_context,
     upload_part_mock,
 )
 from app.auth import get_current_user
@@ -40,6 +48,7 @@ from app.database import upload_sessions_collection, uploads_collection, bucket_
 from app.config import get_settings
 from app.rate_limit import limiter
 from app.encryption_utils import encrypt_value, decrypt_value
+from app.security_utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/upload", tags=["Upload"])
@@ -177,7 +186,13 @@ def _handle_s3_error(action: str, e: Exception):
         if code in bad_request_codes:
             raise HTTPException(status_code=400, detail=f"Bad upload request: {msg}")
         if code in forbidden_codes:
-            raise HTTPException(status_code=403, detail="Forbidden to perform upload operation")
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Forbidden to perform {action.lower()} operation. "
+                    "Check bucket IAM policy for required permissions (for delete: s3:DeleteObject)."
+                ),
+            )
         if code in unauthorized_codes:
             raise HTTPException(status_code=401, detail="Unauthorized to perform upload operation")
 
@@ -310,6 +325,80 @@ def _discover_bucket_region(access_key: str, secret_key: str, bucket_name: str) 
         return None
 
 
+def _recover_upload_record_reference(username: str, upload_record: dict) -> dict | None:
+    """Try to recover file_id/file_key for legacy history records from completed sessions."""
+    record_file_id = (upload_record.get("file_id") or "").strip() or None
+    record_file_key = (upload_record.get("file_key") or "").strip() or None
+    if record_file_id and record_file_key:
+        return {
+            "file_id": record_file_id,
+            "file_key": record_file_key,
+            "bucket_id": (upload_record.get("bucket_id") or "").strip() or None,
+            "bucket_name": (upload_record.get("bucket_name") or upload_record.get("bucket") or "").strip() or None,
+        }
+
+    filename = (upload_record.get("filename") or "").strip()
+    checksum = (upload_record.get("checksum") or "").strip()
+    try:
+        size = int(upload_record.get("size", 0) or 0)
+    except (TypeError, ValueError):
+        size = 0
+
+    session_query = {
+        "user_id": username,
+        "status": "completed",
+        "file_key": {"$exists": True, "$ne": ""},
+    }
+    if filename:
+        session_query["filename"] = filename
+    if size > 0:
+        session_query["size"] = size
+    if checksum:
+        session_query["checksum"] = checksum
+
+    session = upload_sessions_collection.find_one(session_query, sort=[("completed_at", -1)])
+    if not session:
+        # Relax query if checksum was missing or changed.
+        relaxed_query = {
+            "user_id": username,
+            "status": "completed",
+            "file_key": {"$exists": True, "$ne": ""},
+        }
+        if filename:
+            relaxed_query["filename"] = filename
+        if size > 0:
+            relaxed_query["size"] = size
+        session = upload_sessions_collection.find_one(relaxed_query, sort=[("completed_at", -1)])
+
+    if not session:
+        return None
+
+    recovered = {
+        "file_id": (session.get("file_id") or "").strip() or None,
+        "file_key": (session.get("file_key") or "").strip() or None,
+        "bucket_id": (session.get("bucket_id") or "").strip() or None,
+        "bucket_name": (session.get("bucket_name") or "").strip() or None,
+    }
+
+    if not recovered["file_key"]:
+        return None
+
+    uploads_collection.update_one(
+        {"_id": upload_record["_id"], "user_id": username},
+        {
+            "$set": {
+                "file_id": recovered["file_id"],
+                "file_key": recovered["file_key"],
+                "bucket_id": recovered["bucket_id"],
+                "bucket_name": recovered["bucket_name"] or upload_record.get("bucket_name") or upload_record.get("bucket"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+
+    return recovered
+
+
 def _raise_bucket_validation_error(error: ClientError):
     details = error.response.get("Error", {})
     code = str(details.get("Code", ""))
@@ -344,6 +433,73 @@ def _raise_bucket_validation_error(error: ClientError):
     raise HTTPException(status_code=400, detail="Unable to validate bucket credentials")
 
 
+def _validate_bucket_public_access_settings(s3_client, bucket_name: str):
+    """Reject buckets that can be publicly exposed.
+
+    Requires strict public access block and non-public bucket policy status.
+    """
+    try:
+        pab = s3_client.get_public_access_block(Bucket=bucket_name)
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchPublicAccessBlockConfiguration", "NoSuchPublicAccessBlock"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Bucket must enforce all S3 Public Access Block settings. "
+                    "Enable block public ACLs and block public bucket policies."
+                ),
+            )
+        if code in {"AccessDenied", "AllAccessDisabled"}:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Unable to validate bucket public access settings. "
+                    "Grant s3:GetBucketPublicAccessBlock and s3:GetBucketPolicyStatus."
+                ),
+            )
+        raise
+
+    config = pab.get("PublicAccessBlockConfiguration") or {}
+    required = {
+        "BlockPublicAcls": True,
+        "IgnorePublicAcls": True,
+        "BlockPublicPolicy": True,
+        "RestrictPublicBuckets": True,
+    }
+    missing = [key for key, required_value in required.items() if bool(config.get(key)) != required_value]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Bucket public access settings are not strict enough. "
+                f"Enable: {', '.join(missing)}"
+            ),
+        )
+
+    try:
+        policy_status = s3_client.get_bucket_policy_status(Bucket=bucket_name)
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchBucketPolicy", "NoSuchPolicy"}:
+            return
+        if code in {"AccessDenied", "AllAccessDisabled"}:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Unable to validate bucket policy public status. "
+                    "Grant s3:GetBucketPolicyStatus."
+                ),
+            )
+        raise
+
+    if bool(policy_status.get("PolicyStatus", {}).get("IsPublic", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="Bucket policy is public. Disable public bucket policy access before adding this bucket.",
+        )
+
+
 def _parse_uploads_query_timestamp(value: str, field_name: str) -> str:
     raw_value = (value or "").strip()
     if not raw_value:
@@ -364,11 +520,22 @@ def _parse_uploads_query_timestamp(value: str, field_name: str) -> str:
 @limiter.limit("30/minute")
 async def start_upload(request: Request, payload: StartUploadRequest, username: str = Depends(get_current_user)):
     try:
-        extension = _extract_extension(payload.file_name)
+        settings = get_settings()
+        sanitized_file_name = sanitize_filename(payload.file_name)
+
+        extension = _extract_extension(sanitized_file_name)
         if extension not in ALLOWED_UPLOAD_EXTENSIONS and not _is_folder_relative_path(payload.file_name):
             raise HTTPException(
                 status_code=415,
                 detail="Unsupported file extension. Allowed extensions: .dcm, .dicom, .jpg, .jpeg, .png, .pdf, .zip",
+            )
+
+        if payload.size > settings.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File size exceeds limit. Max allowed is {settings.MAX_FILE_SIZE_BYTES} bytes"
+                ),
             )
 
         selected_bucket_id, selected_bucket_name = _normalize_bucket_selector(payload.bucket_id, payload.bucket_name)
@@ -378,7 +545,7 @@ async def start_upload(request: Request, payload: StartUploadRequest, username: 
             bucket_name=selected_bucket_name,
         )
         result = initiate_multipart_upload(
-            payload.file_name,
+            sanitized_file_name,
             payload.content_type,
             username,
             s3_client=s3_client,
@@ -391,7 +558,7 @@ async def start_upload(request: Request, payload: StartUploadRequest, username: 
         upload_sessions_collection.insert_one({
             "user_id": username,
             "file_id": payload.file_id,
-            "filename": payload.file_name,
+            "filename": sanitized_file_name,
             "bucket_id": bucket_id,
             "bucket_name": bucket_name,
             "use_kms": use_kms,
@@ -777,12 +944,16 @@ async def complete_upload(request: Request, payload: CompleteUploadRequest, user
         # Save record in MongoDB for upload history
         uploads_collection.insert_one({
             "user_id": username,
-            "filename": session_filename or payload.file_name,
+            "file_id": payload.file_id,
+            "file_key": payload.file_key,
+            "filename": session_filename or sanitize_filename(payload.file_name),
             "size": expected_size,
             "checksum": final_checksum,
             "expected_size": expected_size,
             "actual_size": actual_size,
             "size_mismatch": size_mismatch,
+            "bucket_id": session_bucket_id,
+            "bucket_name": session_bucket_name or bucket_name,
             "bucket": bucket_name,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
@@ -848,7 +1019,10 @@ async def get_upload_history(
     from_ts: str | None = Query(default=None),
     to_ts: str | None = Query(default=None),
 ):
-    uploads_query = {"user_id": username}
+    uploads_query = {
+        "user_id": username,
+        "deleted_at": {"$exists": False},
+    }
 
     from_iso = _parse_uploads_query_timestamp(from_ts, "from_ts") if from_ts else None
     to_iso = _parse_uploads_query_timestamp(to_ts, "to_ts") if to_ts else None
@@ -872,14 +1046,433 @@ async def get_upload_history(
     return records
 
 
+@router.get("/bucket-files", response_model=BucketFileListResponse)
+@limiter.limit("120/minute")
+async def get_bucket_files(
+    request: Request,
+    username: str = Depends(get_current_user),
+    bucket_id: str | None = Query(default=None),
+    bucket_name: str | None = Query(default=None),
+):
+    normalized_bucket_id, normalized_bucket_name = _normalize_bucket_selector(bucket_id, bucket_name)
+    if not normalized_bucket_id and not normalized_bucket_name:
+        raise HTTPException(status_code=400, detail="bucket_id or bucket_name is required")
+
+    try:
+        if get_settings().USE_MOCK_S3:
+            uploads_query = {
+                "user_id": username,
+                "deleted_at": {"$exists": False},
+            }
+            if normalized_bucket_name:
+                uploads_query["bucket_name"] = normalized_bucket_name
+
+            records = list(uploads_collection.find(uploads_query).sort("created_at", -1))
+            files = []
+            for record in records:
+                file_key = (record.get("file_key") or "").strip()
+                if not file_key:
+                    continue
+                file_name = file_key.rsplit("/", 1)[-1]
+                files.append(
+                    {
+                        "file_key": file_key,
+                        "file_name": file_name,
+                        "size": int(record.get("size") or 0),
+                        "last_modified": record.get("created_at"),
+                        "bucket_name": normalized_bucket_name or record.get("bucket_name") or record.get("bucket") or "mock-bucket",
+                    }
+                )
+
+            return {
+                "bucket_name": normalized_bucket_name or "mock-bucket",
+                "files": files,
+            }
+
+        s3_client, resolved_bucket_name, _, _, _ = _get_user_bucket_context(
+            username,
+            bucket_id=normalized_bucket_id,
+            bucket_name=normalized_bucket_name,
+        )
+
+        paginator = s3_client.get_paginator("list_objects_v2")
+        files = []
+        for page in paginator.paginate(Bucket=resolved_bucket_name):
+            for item in page.get("Contents", []):
+                file_key = str(item.get("Key") or "").strip()
+                if not file_key or file_key.endswith("/"):
+                    continue
+                files.append(
+                    {
+                        "file_key": file_key,
+                        "file_name": file_key.rsplit("/", 1)[-1],
+                        "size": int(item.get("Size") or 0),
+                        "last_modified": item.get("LastModified").isoformat() if item.get("LastModified") else None,
+                        "bucket_name": resolved_bucket_name,
+                    }
+                )
+
+        files.sort(key=lambda file: file.get("last_modified") or "", reverse=True)
+        return {
+            "bucket_name": resolved_bucket_name,
+            "files": files,
+        }
+    except Exception as e:
+        _handle_s3_error("List bucket files", e)
+
+
 @router.post("/get-file-url", response_model=FileUrlResponse)
 @limiter.limit("120/minute")
 async def get_file_url(request: Request, payload: FileUrlRequest, username: str = Depends(get_current_user)):
     try:
-        url = generate_presigned_get_url(payload.file_key)
-        return {"url": url, "file_key": payload.file_key}
+        requested_file_id = (payload.file_id or "").strip() or None
+        requested_file_key = (payload.file_key or "").strip() or None
+        requested_upload_record_id = (payload.upload_record_id or "").strip() or None
+        requested_bucket_id = (payload.bucket_id or "").strip() or None
+        requested_bucket_name = (payload.bucket_name or "").strip() or None
+
+        if not requested_file_id and not requested_file_key and not requested_upload_record_id:
+            raise HTTPException(status_code=400, detail="file_id, file_key, or upload_record_id is required")
+
+        # Direct bucket-scoped access for file browsing section.
+        if requested_file_key and (requested_bucket_id or requested_bucket_name):
+            s3_client, resolved_bucket_name, _, _, _ = _get_user_bucket_context(
+                username,
+                bucket_id=requested_bucket_id,
+                bucket_name=requested_bucket_name,
+            )
+            url = generate_presigned_get_url_with_context(
+                requested_file_key,
+                s3_client=s3_client,
+                bucket_name=resolved_bucket_name,
+            )
+            return {
+                "url": url,
+                "file_key": requested_file_key,
+                "expires_in": get_settings().PRESIGNED_URL_EXPIRY,
+            }
+
+        uploads_query = {
+            "user_id": username,
+            "deleted_at": {"$exists": False},
+        }
+        if requested_upload_record_id:
+            try:
+                uploads_query["_id"] = ObjectId(requested_upload_record_id)
+            except (InvalidId, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid upload_record_id")
+        elif requested_file_key:
+            uploads_query["file_key"] = requested_file_key
+        elif requested_file_id:
+            uploads_query["file_id"] = requested_file_id
+
+        upload_record = uploads_collection.find_one(uploads_query, sort=[("created_at", -1)])
+        if not upload_record:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        recovered = _recover_upload_record_reference(username, upload_record)
+
+        resolved_file_key = None
+        if recovered:
+            resolved_file_key = recovered.get("file_key")
+        if not resolved_file_key:
+            resolved_file_key = (upload_record.get("file_key") or "").strip() or requested_file_key
+
+        if not resolved_file_key:
+            raise HTTPException(
+                status_code=409,
+                detail="This file record predates download support. Re-upload to enable download.",
+            )
+
+        bucket_id = None
+        bucket_name = None
+        if recovered:
+            bucket_id = recovered.get("bucket_id")
+            bucket_name = recovered.get("bucket_name")
+
+        if not bucket_id:
+            bucket_id = (upload_record.get("bucket_id") or "").strip() or None
+        if not bucket_name:
+            bucket_name = (upload_record.get("bucket_name") or "").strip() or None
+
+        if not bucket_name:
+            bucket_name = (upload_record.get("bucket") or "").strip() or None
+
+        if not bucket_id and not bucket_name:
+            raise HTTPException(status_code=409, detail="Bucket information missing for this file")
+
+        s3_client, resolved_bucket_name, _, _, _ = _get_user_bucket_context(
+            username,
+            bucket_id=bucket_id,
+            bucket_name=bucket_name,
+        )
+
+        url = generate_presigned_get_url_with_context(
+            resolved_file_key,
+            s3_client=s3_client,
+            bucket_name=resolved_bucket_name,
+        )
+
+        return {
+            "url": url,
+            "file_key": resolved_file_key,
+            "expires_in": get_settings().PRESIGNED_URL_EXPIRY,
+        }
     except Exception as e:
         _handle_s3_error("Get file URL", e)
+
+
+@router.get("/get-file-url", response_model=FileUrlResponse)
+@limiter.limit("120/minute")
+async def get_file_url_by_query(
+    request: Request,
+    username: str = Depends(get_current_user),
+    fileId: str | None = Query(default=None),
+    file_id: str | None = Query(default=None),
+):
+    normalized_file_id = (fileId or file_id or "").strip()
+    if not normalized_file_id:
+        raise HTTPException(status_code=400, detail="fileId or file_id is required")
+
+    payload = FileUrlRequest(file_id=normalized_file_id)
+    return await get_file_url(request=request, payload=payload, username=username)
+
+
+@router.delete("/file/{upload_record_id}", response_model=DeleteFileResponse)
+@limiter.limit("60/minute")
+async def delete_uploaded_file(
+    request: Request,
+    upload_record_id: str,
+    username: str = Depends(get_current_user),
+):
+    try:
+        try:
+            record_object_id = ObjectId(upload_record_id)
+        except (InvalidId, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid file id")
+
+        upload_record = uploads_collection.find_one(
+            {
+                "_id": record_object_id,
+                "user_id": username,
+                "deleted_at": {"$exists": False},
+            }
+        )
+        if not upload_record:
+            raise HTTPException(status_code=404, detail="File record not found")
+
+        recovered = _recover_upload_record_reference(username, upload_record)
+        file_key = None
+        if recovered:
+            file_key = (recovered.get("file_key") or "").strip() or None
+        if not file_key:
+            file_key = (upload_record.get("file_key") or "").strip() or None
+
+        if not file_key:
+            raise HTTPException(
+                status_code=409,
+                detail="Unable to resolve file object key for deletion",
+            )
+
+        bucket_id = None
+        bucket_name = None
+        if recovered:
+            bucket_id = (recovered.get("bucket_id") or "").strip() or None
+            bucket_name = (recovered.get("bucket_name") or "").strip() or None
+
+        if not bucket_id:
+            bucket_id = (upload_record.get("bucket_id") or "").strip() or None
+        if not bucket_name:
+            bucket_name = (upload_record.get("bucket_name") or "").strip() or None
+        if not bucket_name:
+            bucket_name = (upload_record.get("bucket") or "").strip() or None
+
+        if not bucket_id and not bucket_name:
+            raise HTTPException(status_code=409, detail="Bucket context missing for this file")
+
+        s3_client, resolved_bucket_name, _, _, _ = _get_user_bucket_context(
+            username,
+            bucket_id=bucket_id,
+            bucket_name=bucket_name,
+        )
+
+        delete_object_with_context(
+            file_key,
+            s3_client=s3_client,
+            bucket_name=resolved_bucket_name,
+        )
+
+        uploads_collection.update_one(
+            {"_id": record_object_id, "user_id": username, "deleted_at": {"$exists": False}},
+            {
+                "$set": {
+                    "status": "deleted",
+                    "deleted_at": datetime.now(timezone.utc).isoformat(),
+                    "deleted_by": username,
+                }
+            },
+        )
+
+        return {
+            "message": "File deleted securely",
+            "upload_record_id": upload_record_id,
+            "file_key": file_key,
+        }
+    except Exception as e:
+        _handle_s3_error("Delete file", e)
+
+
+@router.post("/file/delete-by-key", response_model=DeleteFileByKeyResponse)
+@limiter.limit("60/minute")
+async def delete_file_by_key(
+    request: Request,
+    payload: DeleteFileByKeyRequest,
+    username: str = Depends(get_current_user),
+):
+    try:
+        file_key = (payload.file_key or "").strip()
+        bucket_id = (payload.bucket_id or "").strip() or None
+        bucket_name = (payload.bucket_name or "").strip() or None
+        delete_scope = (payload.delete_scope or "object").strip().lower()
+
+        if not file_key:
+            raise HTTPException(status_code=400, detail="file_key is required")
+        if not bucket_id and not bucket_name:
+            raise HTTPException(status_code=400, detail="bucket_id or bucket_name is required")
+        if delete_scope not in {"object", "prefix"}:
+            raise HTTPException(status_code=400, detail="delete_scope must be object or prefix")
+
+        s3_client, resolved_bucket_name, _, _, _ = _get_user_bucket_context(
+            username,
+            bucket_id=bucket_id,
+            bucket_name=bucket_name,
+        )
+
+        deleted_s3_objects = 0
+        if delete_scope == "prefix":
+            prefix = file_key.rsplit("/", 1)[0] if "/" in file_key else file_key
+            normalized_prefix = f"{prefix}/" if prefix and not prefix.endswith("/") else prefix
+            if not normalized_prefix:
+                raise HTTPException(status_code=400, detail="Cannot infer folder prefix for deletion")
+
+            prefix_delete_result = delete_prefix_with_context(
+                normalized_prefix,
+                s3_client=s3_client,
+                bucket_name=resolved_bucket_name,
+            )
+            deleted_s3_objects = int(prefix_delete_result.get("deleted_count") or 0)
+            mongo_filter = {
+                "user_id": username,
+                "file_key": {"$regex": f"^{re.escape(normalized_prefix)}"},
+                "bucket": resolved_bucket_name,
+                "deleted_at": {"$exists": False},
+            }
+        else:
+            delete_object_with_context(
+                file_key,
+                s3_client=s3_client,
+                bucket_name=resolved_bucket_name,
+            )
+            deleted_s3_objects = 1
+            mongo_filter = {
+                "user_id": username,
+                "file_key": file_key,
+                "bucket": resolved_bucket_name,
+                "deleted_at": {"$exists": False},
+            }
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        update_result = uploads_collection.update_many(
+            mongo_filter,
+            {
+                "$set": {
+                    "status": "deleted",
+                    "deleted_at": now_iso,
+                    "deleted_by": username,
+                    "delete_reason": "files_tab_delete",
+                }
+            },
+        )
+
+        return {
+            "message": "File deleted securely" if delete_scope == "object" else "Folder path deleted securely",
+            "file_key": file_key,
+            "deleted_history_records": int(update_result.modified_count or 0),
+            "deleted_s3_objects": deleted_s3_objects,
+        }
+    except Exception as e:
+        _handle_s3_error("Delete file by key", e)
+
+
+@router.delete("/uploads/{upload_record_id}", response_model=DeleteHistoryRecordResponse)
+@limiter.limit("90/minute")
+async def delete_history_record(
+    request: Request,
+    upload_record_id: str,
+    username: str = Depends(get_current_user),
+):
+    try:
+        try:
+            record_object_id = ObjectId(upload_record_id)
+        except (InvalidId, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid upload record id")
+
+        update_result = uploads_collection.update_one(
+            {
+                "_id": record_object_id,
+                "user_id": username,
+                "deleted_at": {"$exists": False},
+            },
+            {
+                "$set": {
+                    "status": "history_removed",
+                    "deleted_at": datetime.now(timezone.utc).isoformat(),
+                    "deleted_by": username,
+                    "delete_reason": "history_record_removed",
+                }
+            },
+        )
+
+        if update_result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="History record not found")
+
+        return {
+            "message": "History record removed",
+            "upload_record_id": upload_record_id,
+        }
+    except Exception as e:
+        _handle_s3_error("Delete history record", e)
+
+
+@router.post("/uploads/clear-history", response_model=ClearHistoryResponse)
+@limiter.limit("20/minute")
+async def clear_upload_history(
+    request: Request,
+    username: str = Depends(get_current_user),
+):
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        update_result = uploads_collection.update_many(
+            {
+                "user_id": username,
+                "deleted_at": {"$exists": False},
+            },
+            {
+                "$set": {
+                    "status": "history_cleared",
+                    "deleted_at": now_iso,
+                    "deleted_by": username,
+                    "delete_reason": "history_cleared",
+                }
+            },
+        )
+
+        return {
+            "message": "History cleared successfully",
+            "cleared_records": int(update_result.modified_count or 0),
+        }
+    except Exception as e:
+        _handle_s3_error("Clear upload history", e)
 
 
 @router.post("/add-bucket", response_model=AddBucketResponse)
@@ -924,6 +1517,7 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
             region_name=resolved_region,
         )
         s3.head_bucket(Bucket=bucket_name)
+        _validate_bucket_public_access_settings(s3, bucket_name)
     except ClientError as e:
         detected_region = _extract_bucket_region_from_error(e)
         current_code = str(e.response.get("Error", {}).get("Code", ""))
@@ -944,6 +1538,7 @@ async def add_bucket(request: Request, payload: AddBucketRequest, username: str 
                     region_name=detected_region,
                 )
                 retry_client.head_bucket(Bucket=bucket_name)
+                _validate_bucket_public_access_settings(retry_client, bucket_name)
                 resolved_region = detected_region
             except ClientError as retry_error:
                 try:

@@ -3,11 +3,13 @@ import { useChunkedUpload } from "./hooks/useChunkedUpload";
 import FileUploader from "./components/FileUploader";
 import ProgressTracker from "./components/ProgressTracker";
 import UploadStatus from "./components/UploadStatus";
+import FileList from "./components/FileList";
+import BucketFileBrowser from "./components/BucketFileBrowser";
 import FilePreviewModal from "./components/FilePreviewModal";
 import ToastStack from "./components/ToastStack";
 import Login from "./components/Login";
 import { getCurrentUser } from "./api/authApi";
-import { addBucket, deleteBucket, getBucketUsage, getBuckets, getUploadHistory, updateBucket } from "./api/uploadApi";
+import { addBucket, clearUploadHistory, deleteBucket, getBucketUsage, getBuckets, getUploadHistory, updateBucket } from "./api/uploadApi";
 import JSZip from "jszip";
 import "./App.css";
 
@@ -16,6 +18,7 @@ const COMPLETION_REFRESH_MS = 5000;
 const BYTES_PER_GB = 1024 * 1024 * 1024;
 const HISTORY_PAGE_SIZE = 10;
 const DELETE_BUCKET_CONFIRM_PHRASE = "Delete Bucket";
+const CLEAR_HISTORY_CONFIRM_PHRASE = "Clear History";
 const BUCKET_NAME_REGEX = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const REGION_FORMAT_REGEX = /^[a-z]{2}-[a-z]+-\d+$/;
 const THEME_STORAGE_KEY = "theme";
@@ -202,6 +205,9 @@ function App() {
   const [bucketEditErrors, setBucketEditErrors] = useState({});
   const [bucketEditTouched, setBucketEditTouched] = useState({});
   const [bucketEditAdvancedOpen, setBucketEditAdvancedOpen] = useState(false);
+  const [showClearHistoryModal, setShowClearHistoryModal] = useState(false);
+  const [clearHistoryConfirmText, setClearHistoryConfirmText] = useState("");
+  const [clearingHistory, setClearingHistory] = useState(false);
   const completionRefreshTimerRef = useRef(null);
   const completionNoticeShownRef = useRef(false);
   const userMenuRef = useRef(null);
@@ -1065,6 +1071,36 @@ function App() {
     }
   }, [bucketEditForm, bucketUpdating, fetchWorkspaceData, handleCloseEditBucket, pushToast]);
 
+  const handleOpenClearHistoryModal = useCallback(() => {
+    setShowClearHistoryModal(true);
+    setClearHistoryConfirmText("");
+  }, []);
+
+  const handleCloseClearHistoryModal = useCallback(() => {
+    if (clearingHistory) return;
+    setShowClearHistoryModal(false);
+    setClearHistoryConfirmText("");
+  }, [clearingHistory]);
+
+  const canConfirmClearHistory = clearHistoryConfirmText.trim() === CLEAR_HISTORY_CONFIRM_PHRASE;
+
+  const handleConfirmClearHistory = useCallback(async () => {
+    if (!canConfirmClearHistory || clearingHistory) return;
+
+    setClearingHistory(true);
+    try {
+      const result = await clearUploadHistory();
+      const clearedRecords = Number(result?.cleared_records || 0);
+      pushToast("success", "History Cleared", `${clearedRecords} record(s) removed from history.`);
+      await fetchWorkspaceData();
+      handleCloseClearHistoryModal();
+    } catch (err) {
+      pushToast("error", "Clear History Failed", getDetailMessage(err, "Could not clear history."));
+    } finally {
+      setClearingHistory(false);
+    }
+  }, [canConfirmClearHistory, clearingHistory, fetchWorkspaceData, handleCloseClearHistoryModal, pushToast]);
+
   const renderDataError = dataError ? (
     <div className="rounded-lg border border-error/20 bg-error-container px-4 py-3 text-xs font-semibold text-error">
       {dataError}
@@ -1076,7 +1112,17 @@ function App() {
       <div className="p-6 border-b border-surface-container-high">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-extrabold tracking-tight text-primary headline">Upload History</h2>
-          <p className="text-xs font-semibold text-on-surface-variant">{filteredHistoryRecords.length} records</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs font-semibold text-on-surface-variant">{filteredHistoryRecords.length} records</p>
+            <button
+              type="button"
+              onClick={handleOpenClearHistoryModal}
+              className="rounded-lg bg-error-container text-error px-3 py-1.5 text-xs font-bold disabled:opacity-60"
+              disabled={filteredHistoryRecords.length === 0}
+            >
+              Clear History
+            </button>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <input
@@ -1096,44 +1142,12 @@ function App() {
           </select>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left font-body">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant bg-surface-container-low/50">
-              <th className="px-6 py-4">File</th>
-              <th className="px-6 py-4">Bucket</th>
-              <th className="px-6 py-4">Size</th>
-              <th className="px-6 py-4">Checksum</th>
-              <th className="px-6 py-4 text-right">Created</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-container-high/50">
-            {records.length === 0 ? (
-              <tr>
-                <td colSpan="5" className="px-6 py-10 text-sm font-medium text-on-surface-variant text-center">
-                  {emptyMessage}
-                </td>
-              </tr>
-            ) : (
-              records.map((record) => (
-                <tr key={record.id} className="hover:bg-surface-container-low/30 transition-colors">
-                  <td className="px-6 py-5 text-sm font-semibold text-primary max-w-[280px] truncate" title={record.filename || record.file_name || "-"}>
-                    {record.filename || record.file_name || "-"}
-                  </td>
-                  <td className="px-6 py-5 text-xs font-bold text-on-surface-variant uppercase tracking-wide">
-                    {record.bucket || "medivault-bucket"}
-                  </td>
-                  <td className="px-6 py-5 text-xs font-bold text-on-surface-variant">{formatBytes(Number(record.size || 0))}</td>
-                  <td className="px-6 py-5 text-xs text-on-surface-variant font-mono max-w-[180px] truncate" title={record.checksum || "-"}>
-                    {record.checksum || "-"}
-                  </td>
-                  <td className="px-6 py-5 text-xs text-on-surface-variant text-right font-medium">{formatDate(record.created_at)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <FileList
+        records={records}
+        emptyMessage={emptyMessage}
+        onDeleteSuccess={fetchWorkspaceData}
+        pushToast={pushToast}
+      />
       <div className="px-6 py-3 border-t border-surface-container-high flex items-center justify-end gap-3 text-xs font-semibold text-on-surface-variant">
         <span>{historyPageStart}-{historyPageEnd} of {filteredHistoryRecords.length}</span>
         <button
@@ -1989,7 +2003,53 @@ function App() {
         <p className="text-sm text-on-surface-variant font-medium mt-1">Complete upload records from server data.</p>
       </div>
       {renderHistoryTable(paginatedHistoryRecords, "No upload records found for the selected search/filter.")}
+
+      {showClearHistoryModal ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-md rounded-xl bg-surface-container-lowest border border-surface-container-high shadow-xl p-6">
+            <h3 className="text-lg font-bold text-primary headline">Clear Upload History</h3>
+            <p className="mt-2 text-sm font-medium text-on-surface-variant">
+              This removes history records from MediVault. It does not delete objects from S3.
+            </p>
+            <p className="mt-3 text-xs font-semibold text-on-surface-variant">
+              Type "{CLEAR_HISTORY_CONFIRM_PHRASE}" to confirm.
+            </p>
+            <input
+              className="mt-2 w-full rounded-lg bg-surface-container-highest px-3 py-2.5 text-sm border border-surface-container-high"
+              value={clearHistoryConfirmText}
+              onChange={(event) => setClearHistoryConfirmText(event.target.value)}
+              placeholder={CLEAR_HISTORY_CONFIRM_PHRASE}
+            />
+            {clearHistoryConfirmText.length > 0 && !canConfirmClearHistory ? (
+              <p className="mt-1 text-[11px] text-error font-semibold">Please type Clear History exactly</p>
+            ) : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseClearHistoryModal}
+                disabled={clearingHistory}
+                className="rounded-lg bg-surface-container-high text-primary px-4 py-2 text-xs font-bold disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearHistory}
+                disabled={!canConfirmClearHistory || clearingHistory}
+                className="rounded-lg bg-error-container text-error px-4 py-2 text-xs font-bold disabled:opacity-60"
+              >
+                {clearingHistory ? "Clearing..." : "Clear"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
+  );
+
+  const renderFiles = () => (
+    <BucketFileBrowser buckets={buckets} pushToast={pushToast} onDataChanged={fetchWorkspaceData} />
   );
 
   if (!authReady) {
@@ -2026,6 +2086,7 @@ function App() {
     { key: "dashboard", label: "Dashboard" },
     { key: "upload", label: "Upload" },
     { key: "buckets", label: "Buckets" },
+    { key: "files", label: "Files" },
     { key: "history", label: "History" },
   ];
 
@@ -2138,6 +2199,7 @@ function App() {
       {activeTab === "dashboard" ? renderDashboard() : null}
       {activeTab === "upload" ? renderUploadCenter() : null}
       {activeTab === "buckets" ? renderBuckets() : null}
+      {activeTab === "files" ? renderFiles() : null}
       {activeTab === "history" ? renderHistory() : null}
 
       {showPreview && file && (
